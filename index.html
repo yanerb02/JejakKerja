@@ -204,6 +204,15 @@ h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:
 .toast .av{--s:30px}
 .toast.hopx .av{animation:hop .7s}
 
+/* ---- drive ---- */
+.paper a{color:#0B57D0}
+.code{width:100%;min-height:220px;font-family:var(--f-mono);font-size:12px;line-height:1.5;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);resize:vertical}
+.guide{margin:0;padding-left:20px;display:grid;gap:8px;font-size:14px}
+.guide b{font-weight:700}
+.drv-st{font-size:13px;color:var(--muted)}
+.drv-st.ok{color:var(--good);font-weight:600}
+.drv-st.bad{color:var(--bad);font-weight:600}
+
 /* ---- pekerjaan ---- */
 .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .search{position:relative;flex:1 1 220px;min-width:0}
@@ -523,6 +532,122 @@ function download(blob,name){
   a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(u)},4000);
 }
 
+/* ================= Google Drive (lewat skrip milik pengguna) ================= */
+var GAS_CODE=String.raw`/**
+ * Jejak Kerja - penerima unggahan ke Google Drive
+ * Tempel seluruh kode ini di script.google.com, ganti KATA_SANDI, lalu Deploy sebagai Aplikasi web.
+ */
+var KATA_SANDI = 'GANTI-DENGAN-KATA-SANDI-ANDA';
+var FOLDER_UTAMA = 'Jejak Kerja';
+
+// Jalankan fungsi ini sekali dari editor untuk memberi izin akses Drive.
+function izin() {
+  DriveApp.getRootFolder();
+}
+
+function doGet() {
+  return keluar_({ ok: true, pesan: 'Skrip Jejak Kerja aktif' });
+}
+
+function doPost(e) {
+  try {
+    var d = JSON.parse(e.postData.contents);
+    if (d.sandi !== KATA_SANDI) return keluar_({ ok: false, galat: 'Kata sandi skrip salah' });
+    var folder = folderTujuan_(d.folderId);
+    if (d.aksi === 'tes') {
+      return keluar_({ ok: true, folder: folder.getName(), folderUrl: folder.getUrl() });
+    }
+    if (d.aksi === 'unggah') {
+      var sub = d.sub || [];
+      for (var i = 0; i < sub.length; i++) folder = anak_(folder, bersih_(sub[i]));
+      var blob = Utilities.newBlob(Utilities.base64Decode(d.data), d.mime || 'application/octet-stream', bersih_(d.nama));
+      var file = folder.createFile(blob);
+      if (d.akses === 'tautan') file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      return keluar_({ ok: true, id: file.getId(), url: file.getUrl(), nama: file.getName(), folderUrl: folder.getUrl() });
+    }
+    return keluar_({ ok: false, galat: 'Aksi tidak dikenal' });
+  } catch (err) {
+    return keluar_({ ok: false, galat: String(err) });
+  }
+}
+
+function folderTujuan_(id) {
+  if (id) return DriveApp.getFolderById(id);
+  return anak_(DriveApp.getRootFolder(), FOLDER_UTAMA);
+}
+
+function anak_(induk, nama) {
+  var it = induk.getFoldersByName(nama);
+  return it.hasNext() ? it.next() : induk.createFolder(nama);
+}
+
+function bersih_(s) {
+  var t = String(s || '').replace(/[\\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90);
+  return t || 'berkas';
+}
+
+function keluar_(o) {
+  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}
+`;
+var fileById=function(id){return db.files.filter(function(f){return f.id===id})[0]};
+var isUrl=function(x){return /^https?:\/\//i.test(x||'')};
+var fileUrl=function(f){return f&&f.drive&&f.drive.url?f.drive.url:(f&&isUrl(f.lokasi)?f.lokasi:'')};
+function driveCfg(){var c=db.profile&&db.profile.drive;return c&&c.url&&c.sandi?c:null}
+function folderIdFrom(s){s=(s||'').trim();if(!s)return '';var m=s.match(/folders\/([A-Za-z0-9_-]+)/)||s.match(/[?&]id=([A-Za-z0-9_-]+)/);if(m)return m[1];return /^[A-Za-z0-9_-]{15,}$/.test(s)?s:''}
+function errMsg(e){
+  var m=(e&&e.message)||String(e);
+  if(e instanceof TypeError||/Failed to fetch|NetworkError|Load failed/i.test(m))return 'Tidak bisa menghubungi skrip. Periksa internet dan alamat skrip.';
+  if(e instanceof SyntaxError)return 'Skrip tidak membalas dengan benar. Pastikan Deploy diatur akses "Siapa saja" dan alamatnya berakhiran /exec.';
+  return m;
+}
+function driveCall(cfg,payload){
+  var body=Object.assign({sandi:cfg.sandi,folderId:folderIdFrom(cfg.folder)},payload);
+  return fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(body),redirect:'follow'})
+    .then(function(r){return r.json()})
+    .then(function(j){if(!j.ok)throw new Error(j.galat||'Skrip menolak permintaan');return j});
+}
+function toBase64(blob){return new Promise(function(res,rej){var fr=new FileReader();fr.onload=function(){res(String(fr.result).split(',')[1]||'')};fr.onerror=function(){rej(fr.error)};fr.readAsDataURL(blob)})}
+function driveUpload(f,blob){
+  var cfg=driveCfg();
+  if(blob.size>20*1024*1024)return Promise.reject(new Error('File lebih dari 20 MB. Kecilkan dulu atau unggah langsung lewat Drive.'));
+  var w=workById(f.workId),sub=[(f.tgl||today()).slice(0,7)];if(w)sub.push(w.judul);
+  return toBase64(blob).then(function(b64){return driveCall(cfg,{aksi:'unggah',nama:blob.name||f.nama,mime:blob.type||'application/octet-stream',sub:sub,akses:cfg.akses==='tautan'?'tautan':'pribadi',data:b64})});
+}
+/* simpan file milik catatan berkas f: ke Drive bila tersambung, kalau gagal ke perangkat dan ditandai menunggu */
+function storeFile(f,blob){
+  var cfg=driveCfg(),limit=(cfg?20:25)*1024*1024;
+  if(blob.size>limit)return Promise.resolve({where:'toobig'});
+  var local=function(pending,err){
+    return idbPut(f.id,blob).then(function(){f.lampiran={nama:blob.name||f.nama,size:blob.size,tipe:blob.type};if(pending)f.pendingDrive=1;else delete f.pendingDrive;delete f.drive;return {where:pending?'pending':'local',err:err}}).catch(function(){return {where:'fail',err:err}});
+  };
+  if(!cfg)return local(false);
+  return driveUpload(f,blob).then(function(res){
+    f.drive={id:res.id,url:res.url,nama:res.nama};delete f.lampiran;delete f.pendingDrive;idbDel(f.id);return {where:'drive'};
+  }).catch(function(err){return local(true,err)});
+}
+function uploadPending(id,btn){
+  var f=fileById(id);if(!f||!driveCfg())return;
+  if(btn){btn.disabled=true;btn.textContent='Mengunggah…'}
+  idbGet(id).then(function(blob){if(!blob)throw new Error('File di perangkat tidak ditemukan');if(!blob.name)blob=new File([blob],f.lampiran&&f.lampiran.nama||f.nama,{type:blob.type});return driveUpload(f,blob)})
+   .then(function(res){f.drive={id:res.id,url:res.url,nama:res.nama};delete f.pendingDrive;delete f.lampiran;idbDel(id);save();paintFileList();toast('Terunggah ke Google Drive')})
+   .catch(function(e){toast(errMsg(e));if(btn){btn.disabled=false;btn.textContent='Unggah ke Drive'}});
+}
+function busyDlg(on,msg){
+  $$('#dlg .df button').forEach(function(b){b.disabled=on});
+  var e=$('#dlg .err');if(e){e.style.color=on?'var(--muted)':'';if(on)e.textContent=msg||''}
+}
+function storeMsg(r){
+  if(r.where==='drive')return 'Tersimpan di Google Drive. Tautannya sudah tercatat.';
+  if(r.where==='pending')return 'Belum bisa ke Drive ('+errMsg(r.err)+') File disimpan di perangkat dan bisa diunggah belakangan.';
+  if(r.where==='fail')return 'Berkas dicatat, tetapi file gagal dilampirkan di peramban ini';
+  return 'Berkas dicatat';
+}
+/* sel laporan: teks biasa atau {items:[{n,u}]} berisi tautan */
+var cellTxt=function(c){return c&&c.items?c.items.map(function(i){return i.n}).join('\n'):String(c==null?'':c)};
+var cellHtml=function(c,blank){return c&&c.items?c.items.map(function(i){return i.u?'<a href="'+esc(i.u)+'"'+(blank?' target="_blank" rel="noopener"':'')+'>'+esc(i.n)+'</a>':esc(i.n)}).join('<br>'):esc(c)};
+var fileItem=function(f){return {n:f.nama,u:fileUrl(f)}};
+
 /* ================= kerangka & navigasi ================= */
 var LOGO='<img src="'+ICON192+'" alt="" width="34" height="34">';
 function buildChrome(){
@@ -754,7 +879,7 @@ function renderLogs(){
    +'<div class="week" role="group" aria-label="Minggu ini">'+wk+'</div>'
    +'<div class="card">'+(logs.length?logs.map(function(l){var w=workById(l.workId),k=katOf(w);
       return '<button class="lrow" type="button" data-edit-log="'+l.id+'"><span class="tm">'+l.mulai+'<small>'+l.selesai+'</small></span><span class="tx">'+esc(l.uraian)+'</span>'
-       +'<span class="mt"><span>'+fmtDur(dur(l))+'</span>'+(w?'<span class="chip" style="--dot:'+k.c+'"><i></i><span>'+esc(w.judul)+'</span></span>':'')+(l.output?'<span>Output: '+esc(l.output)+' '+esc(l.satuan||'')+'</span>':'')+(l.bukti?'<span>Bukti: '+esc(l.bukti)+'</span>':'')+'</span></button>'}).join('')
+       +'<span class="mt"><span>'+fmtDur(dur(l))+'</span>'+(w?'<span class="chip" style="--dot:'+k.c+'"><i></i><span>'+esc(w.judul)+'</span></span>':'')+(l.output?'<span>Output: '+esc(l.output)+' '+esc(l.satuan||'')+'</span>':'')+(fileById(l.fileId)?'<span>Berkas: '+esc(fileById(l.fileId).nama)+'</span>':'')+(l.bukti?'<span>Bukti: '+esc(l.bukti)+'</span>':'')+'</span></button>'}).join('')
      :'<div class="empty" style="margin:14px"><b>Belum ada kegiatan di tanggal ini</b>Pakai tombol Catat kegiatan atau pilih templat di bawah.</div>')+'</div>'
    +'<div class="totals"><span>Total tercatat <b>'+fmtDur(mins)+'</b></span><span>Target <b>'+String(db.profile.targetJam||7.5).replace('.',',')+' j</b></span><span>'+(sisa?'Kurang <b>'+fmtDur(sisa)+'</b>':'Target hari ini terpenuhi')+'</span></div>'
    +'<div class="section"><h2 style="font-size:15px">Templat cepat</h2><div class="tpl">'+TPL.map(function(t,i){return '<button class="fchip" type="button" data-tpl="'+i+'">'+esc(t[0])+'</button>'}).join('')+'</div></div>';
@@ -763,7 +888,7 @@ var lDraft=null;
 function openLog(id,preset){
   var l=id?db.logs.filter(function(x){return x.id===id})[0]:null;
   var todayLogs=logsOn(ui.date).sort(byTime),last=todayLogs.length?todayLogs[todayLogs.length-1].selesai:'07:30';
-  lDraft=l?l:Object.assign({id:uid(),tgl:ui.date,mulai:last,selesai:fromMin(Math.min(1439,toMin(last)+60)),uraian:'',workId:'',output:'',satuan:'',bukti:''},preset||{});
+  lDraft=l?l:Object.assign({id:uid(),tgl:ui.date,mulai:last,selesai:fromMin(Math.min(1439,toMin(last)+60)),uraian:'',workId:'',output:'',satuan:'',bukti:'',fileId:''},preset||{});
   var aktif=db.works.filter(function(w){return w.status!=='selesai'||w.id===lDraft.workId});
   openDlg('<div class="dh"><h2 id="dlgTitle">'+(l?'Ubah kegiatan':'Catat kegiatan')+'</h2><button class="iconbtn" type="button" data-act="closeDlg" aria-label="Tutup">'+ic('x')+'</button></div>'
    +'<form id="lform" class="db" autocomplete="off"><div class="fgrid">'
@@ -774,27 +899,45 @@ function openLog(id,preset){
    +'<div class="field full"><label for="l-w">Pekerjaan terkait</label><select id="l-w"><option value="">Tidak terkait pekerjaan tertentu</option>'+aktif.map(function(w){return '<option value="'+w.id+'"'+(w.id===lDraft.workId?' selected':'')+'>'+esc(w.judul)+'</option>'}).join('')+'</select></div>'
    +'<div class="field"><label for="l-o">Output (jumlah)</label><input type="text" id="l-o" inputmode="decimal" value="'+esc(lDraft.output)+'" placeholder="1"></div>'
    +'<div class="field"><label for="l-sat">Satuan</label><input type="text" id="l-sat" list="satuan" value="'+esc(lDraft.satuan)+'" placeholder="dokumen"><datalist id="satuan"><option value="dokumen"><option value="surat"><option value="kegiatan"><option value="laporan"><option value="berkas"><option value="bahan"><option value="orang"></datalist></div>'
-   +'<div class="field full"><label for="l-b">Bukti dukung (opsional)</label><input type="text" id="l-b" value="'+esc(lDraft.bukti)+'" placeholder="Nama berkas, tautan foto, atau nomor surat"></div></div>'
+   +'<div class="field full"><label for="l-bf">Berkas bukti dukung</label><select id="l-bf"><option value="">Tidak ada</option>'+db.files.slice().sort(function(a,b){return (b.tgl||'').localeCompare(a.tgl||'')}).map(function(f){return '<option value="'+f.id+'"'+(f.id===lDraft.fileId?' selected':'')+'>'+esc(f.nama)+' ('+esc(f.jenis)+')</option>'}).join('')+'</select></div>'
+   +'<div class="field full"><label for="l-file">Atau unggah file bukti baru</label><input type="file" id="l-file"><small class="muted">'+(driveCfg()?'Diunggah ke Google Drive, tautannya otomatis masuk ke laporan.':'Tersimpan di perangkat ini. Hubungkan Google Drive di Profil agar laporan berisi tautan.')+'</small></div>'
+   +'<div class="field full"><label for="l-b">Keterangan bukti (opsional)</label><input type="text" id="l-b" value="'+esc(lDraft.bukti)+'" placeholder="Nomor surat, tautan foto, atau catatan"></div></div>'
    +'<div class="err" id="l-err"></div></form>'
    +'<div class="df">'+(l?'<button class="btn danger" type="button" data-act="delLog">'+ic('trash')+'Hapus</button>':'')+'<span class="sp"></span><button class="btn" type="button" data-act="closeDlg">Batal</button>'
    +(l?'':'<button class="btn" type="button" data-act="saveLogMore">Simpan dan tambah lagi</button>')+'<button class="btn primary" type="button" data-act="saveLog">Simpan</button></div>');
 }
-function commitLog(){
+function readLog(){
   var g=function(i){return $('#'+i).value};
-  var l=lDraft;l.tgl=g('l-tgl');l.mulai=g('l-m');l.selesai=g('l-s');l.uraian=g('l-u').trim();l.workId=g('l-w');l.output=g('l-o').trim();l.satuan=g('l-sat').trim();l.bukti=g('l-b').trim();
+  var l=lDraft;l.tgl=g('l-tgl');l.mulai=g('l-m');l.selesai=g('l-s');l.uraian=g('l-u').trim();l.workId=g('l-w');l.output=g('l-o').trim();l.satuan=g('l-sat').trim();l.bukti=g('l-b').trim();l.fileId=g('l-bf');
   var er=$('#l-err');
   if(!l.tgl||!l.mulai||!l.selesai){er.textContent='Tanggal dan jam wajib diisi.';return null}
   if(toMin(l.selesai)<=toMin(l.mulai)){er.textContent='Jam selesai harus setelah jam mulai.';return null}
   if(!l.uraian){er.textContent='Uraian kegiatan belum diisi.';$('#l-u').focus();return null}
+  return l;
+}
+function persistLog(l){
   var ex=db.logs.filter(function(x){return x.id===l.id})[0];
   if(ex)db.logs[db.logs.indexOf(ex)]=l;else db.logs.push(l);
-  save();return l;
+  save();
+}
+function logWithUpload(cb){
+  var l=readLog();if(!l)return;
+  var inp=$('#l-file'),fl=inp&&inp.files&&inp.files[0]||null;
+  if(!fl){persistLog(l);cb(l,null);return}
+  var f={id:uid(),workId:l.workId,nama:fl.name.replace(/\.[^.]+$/,''),jenis:'Dokumen final',nomor:'',tgl:l.tgl,lokasi:'',ket:'Bukti kegiatan '+fmtDate(l.tgl)};
+  busyDlg(true,driveCfg()?'Mengunggah ke Google Drive…':'Menyimpan file…');
+  storeFile(f,fl).then(function(r){
+    busyDlg(false);
+    if(r.where==='toobig'){$('#l-err').textContent='File terlalu besar (maks. '+(driveCfg()?20:25)+' MB).';return}
+    db.files.push(f);l.fileId=f.id;persistLog(l);cb(l,r);
+  });
 }
 
 /* ================= BERKAS ================= */
+function driveBanner(){return driveCfg()?'':'<div class="banner"><span>Hubungkan Google Drive supaya lampiran tersimpan di Drive-mu dan laporan berisi tautan yang bisa diklik.</span><button class="btn sm" type="button" data-act="settings">Hubungkan</button></div>'}
 function renderFiles(){
   $('#view').innerHTML='<div class="page-head"><div><h1>Berkas</h1><p>Catat di mana surat dan bahan disimpan, atau lampirkan filenya langsung. Cari dengan satu kata.</p></div><button class="btn primary" type="button" data-act="newFile">'+ic('plus')+'Catat berkas</button></div>'
-   +'<div class="toolbar"><div class="search">'+ic('search')+'<label class="sr" for="fq">Cari berkas</label><input type="search" id="fq" placeholder="Cari nama, nomor surat, lokasi, atau pekerjaan" value="'+esc(ui.fq)+'"></div>'
+   +driveBanner()+'<div class="toolbar"><div class="search">'+ic('search')+'<label class="sr" for="fq">Cari berkas</label><input type="search" id="fq" placeholder="Cari nama, nomor surat, lokasi, atau pekerjaan" value="'+esc(ui.fq)+'"></div>'
    +'<label class="sr" for="fj">Jenis berkas</label><select id="fj" style="width:auto;min-width:160px"><option value="">Semua jenis</option>'+JENIS.map(function(j){return '<option'+(ui.fj===j?' selected':'')+'>'+j+'</option>'}).join('')+'</select></div><div id="flist"></div>';
   paintFileList();
 }
@@ -805,13 +948,18 @@ function paintFileList(){
     if(q){var w=workById(f.workId);var s=[f.nama,f.nomor,f.lokasi,f.ket,f.jenis,w&&w.judul,f.lampiran&&f.lampiran.nama].join(' ').toLowerCase();if(s.indexOf(q)<0)return false}
     return true}).sort(function(a,b){return (b.tgl||'').localeCompare(a.tgl||'')});
   if(!list.length){el.innerHTML='<div class="empty"><b>'+(db.files.length?'Berkas tidak ditemukan':'Belum ada berkas dicatat')+'</b>'+(db.files.length?'Coba kata kunci lain.':'Catat surat masuk pertama dan kaitkan dengan pekerjaannya.')+'</div>';return}
-  el.innerHTML='<div class="card">'+list.map(function(f){var w=workById(f.workId),k=katOf(w),isUrl=/^https?:\/\//i.test(f.lokasi||'');
-    return '<div class="frow"><div class="ficon">'+ic(f.lampiran?'file':isUrl?'link':'folder')+'</div><div class="fmain"><div class="n">'+esc(f.nama)+'</div>'
+  el.innerHTML='<div class="card">'+list.map(function(f){var w=workById(f.workId),k=katOf(w),u=fileUrl(f),cp=u||f.lokasi;
+    return '<div class="frow"><div class="ficon">'+ic(f.drive?'link':f.lampiran?'file':u?'link':'folder')+'</div><div class="fmain"><div class="n">'+esc(f.nama)+'</div>'
      +'<div class="m">'+esc(f.jenis)+(f.nomor?' · '+esc(f.nomor):'')+(f.tgl?' · '+fmtDate(f.tgl):'')+'</div>'
-     +(f.lokasi?'<div class="m">'+esc(f.lokasi)+'</div>':'')+(f.lampiran?'<div class="m">Lampiran: '+esc(f.lampiran.nama)+' ('+Math.max(1,Math.round(f.lampiran.size/1024))+' KB)</div>':'')
+     +(f.drive?'<div class="m">Tersimpan di Google Drive</div>':'')
+     +(f.pendingDrive?'<div class="m"><span class="pill warn">Belum terunggah ke Drive</span></div>':'')
+     +(f.lokasi&&!(f.drive&&f.lokasi===f.drive.url)?'<div class="m">'+esc(f.lokasi)+'</div>':'')
+     +(f.lampiran?'<div class="m">Di perangkat ini: '+esc(f.lampiran.nama)+' ('+Math.max(1,Math.round(f.lampiran.size/1024))+' KB)</div>':'')
      +(w?'<div style="margin-top:4px"><button class="chip" type="button" style="--dot:'+k.c+';border:0;cursor:pointer" data-open-work="'+w.id+'"><i></i><span>'+esc(w.judul)+'</span></button></div>':'')+'</div>'
-     +'<div class="fact">'+(f.lampiran?'<button class="btn sm" type="button" data-open-att="'+f.id+'">Buka file</button>':'')+(isUrl?'<a class="btn sm" href="'+esc(f.lokasi)+'" target="_blank" rel="noopener">Buka tautan</a>':'')
-     +(f.lokasi&&!isUrl?'<button class="iconbtn" style="width:34px;height:34px" type="button" data-copy="'+f.id+'" aria-label="Salin lokasi">'+ic('copy')+'</button>':'')
+     +'<div class="fact">'+(u?'<a class="btn sm" href="'+esc(u)+'" target="_blank" rel="noopener">'+(f.drive?'Buka di Drive':'Buka tautan')+'</a>':'')
+     +(f.lampiran?'<button class="btn sm" type="button" data-open-att="'+f.id+'">Buka file</button>':'')
+     +(f.pendingDrive&&driveCfg()?'<button class="btn sm primary" type="button" data-drive-up="'+f.id+'">Unggah ke Drive</button>':'')
+     +(cp?'<button class="iconbtn" style="width:34px;height:34px" type="button" data-copy="'+f.id+'" aria-label="Salin tautan atau lokasi">'+ic('copy')+'</button>':'')
      +'<button class="iconbtn" style="width:34px;height:34px" type="button" data-edit-file="'+f.id+'" aria-label="Ubah berkas">'+ic('edit')+'</button></div></div>'}).join('')+'</div>';
 }
 var fDraft=null,fFile=null,fReturnWork=null;
@@ -826,8 +974,8 @@ function openFile(id,preset){
    +'<div class="field"><label for="f-no">Nomor surat / dokumen</label><input type="text" id="f-no" value="'+esc(fDraft.nomor)+'"></div>'
    +'<div class="field"><label for="f-w">Pekerjaan terkait</label><select id="f-w"><option value="">Tidak terkait</option>'+db.works.map(function(w){return '<option value="'+w.id+'"'+(w.id===fDraft.workId?' selected':'')+'>'+esc(w.judul)+'</option>'}).join('')+'</select></div>'
    +'<div class="field full"><label for="f-l">Lokasi penyimpanan atau tautan</label><input type="text" id="f-l" value="'+esc(fDraft.lokasi)+'" placeholder="Tautan Drive, atau jalur folder: Laptop > Dokumen > SOP"></div>'
-   +'<div class="field full"><label for="f-file">Lampirkan file (opsional, tersimpan di perangkat ini)</label><input type="file" id="f-file">'
-   +(fDraft.lampiran?'<small class="muted">Terlampir: '+esc(fDraft.lampiran.nama)+'. Pilih file baru untuk menggantinya.</small>':'<small class="muted">Maksimal 25 MB per file. File tidak ikut tercatat dalam cadangan data.</small>')+'</div>'
+   +'<div class="field full"><label for="f-file">Lampirkan file (opsional)</label><input type="file" id="f-file">'
+   +(fDraft.drive?'<small class="muted">Tersimpan di Google Drive. <a href="'+esc(fDraft.drive.url)+'" target="_blank" rel="noopener">Buka</a>. Pilih file baru untuk menggantinya.</small>':fDraft.lampiran?'<small class="muted">Terlampir di perangkat: '+esc(fDraft.lampiran.nama)+'. Pilih file baru untuk menggantinya.</small>':(driveCfg()?'<small class="muted">Diunggah ke Google Drive (maks. 20 MB), tautannya tercatat otomatis.</small>':'<small class="muted">Tersimpan di perangkat ini (maks. 25 MB). Hubungkan Google Drive di Profil untuk menyimpan ke Drive.</small>'))+'</div>'
    +'<div class="field full"><label for="f-k">Keterangan</label><input type="text" id="f-k" value="'+esc(fDraft.ket)+'"></div></div><div class="err" id="f-err"></div></form>'
    +'<div class="df">'+(f?'<button class="btn danger" type="button" data-act="delFile">'+ic('trash')+'Hapus</button>':'')+'<span class="sp"></span><button class="btn" type="button" data-act="closeFileDlg">Batal</button><button class="btn primary" type="button" data-act="saveFile">Simpan</button></div>');
 }
@@ -845,19 +993,21 @@ function repLabel(r){return r[0]===r[1]?fmtLong(r[0]):fmtDate(r[0])+' s.d. '+fmt
 function buildReport(){
   var r=repRange(),p=db.profile,out={meta:[['Nama',p.nama||'-'],['NIP',p.nip||'-'],['Jabatan',p.jabatan||'-'],['Unit kerja',p.unit||'-']],range:r,period:repLabel(r)};
   if(ui.rep.jenis==='kinerja'){
-    var logs=db.logs.filter(function(l){return l.tgl>=r[0]&&l.tgl<=r[1]}).sort(byTime),last='',n=0,tot=0,days={};
+    var logs=db.logs.filter(function(l){return l.tgl>=r[0]&&l.tgl<=r[1]}).sort(byTime),last='',n=0,tot=0,days={},nl=0;
     out.title='Laporan Kinerja Harian';out.sheet='Kinerja Harian';
-    out.head=['No','Hari / Tanggal','Waktu','Uraian kegiatan','Output','Keterangan'];out.widths=[5,24,14,60,16,36];
-    out.rows=logs.map(function(l){n++;tot+=dur(l);days[l.tgl]=1;var w=workById(l.workId);
-      var row=[n,l.tgl!==last?fmtLong(l.tgl):'',l.mulai+' - '+l.selesai,l.uraian,l.output?(l.output+' '+(l.satuan||'')).trim():'',[w?w.judul:'',l.bukti?'Bukti: '+l.bukti:''].filter(Boolean).join(' | ')];last=l.tgl;return row});
-    out.summary='Total '+logs.length+' kegiatan pada '+Object.keys(days).length+' hari, '+fmtDur(tot)+'.';
+    out.head=['No','Hari / Tanggal','Waktu','Uraian kegiatan','Output','Keterangan','Bukti dukung'];out.widths=[5,24,14,56,14,34,48];
+    out.rows=logs.map(function(l){n++;tot+=dur(l);days[l.tgl]=1;var w=workById(l.workId),fl=fileById(l.fileId),items=[];
+      if(fl){items.push(fileItem(fl));if(fileUrl(fl))nl++}
+      if(l.bukti)items.push({n:l.bukti,u:isUrl(l.bukti)?l.bukti:''});
+      var row=[n,l.tgl!==last?fmtLong(l.tgl):'',l.mulai+' - '+l.selesai,l.uraian,l.output?(l.output+' '+(l.satuan||'')).trim():'',w?w.judul:'',items.length?{items:items}:''];last=l.tgl;return row});
+    out.summary='Total '+logs.length+' kegiatan pada '+Object.keys(days).length+' hari, '+fmtDur(tot)+'. '+nl+' kegiatan memiliki tautan bukti dukung.';
   }else{
     out.title='Rekap Pekerjaan';out.sheet='Rekap Pekerjaan';
-    out.head=['No','Pekerjaan','Jenis','Asal perintah / No. surat','Tenggat','Status','Langkah','Berkas'];out.widths=[5,46,22,34,14,18,10,40];
+    out.head=['No','Pekerjaan','Jenis','Asal perintah / No. surat','Tenggat','Status','Langkah','Berkas (tautan)'];out.widths=[5,46,22,34,14,18,10,52];
     var ws=db.works.filter(function(w){return (w.dibuat||'0000')<=r[1]&&(w.status!=='selesai'||(w.selesaiTgl||r[0])>=r[0])}).sort(function(a,b){return (a.tenggat||'9999').localeCompare(b.tenggat||'9999')});
     var k=0,sel=0;
     out.rows=ws.map(function(w){k++;if(w.status==='selesai')sel++;var st=w.subtasks||[],fl=db.files.filter(function(f){return f.workId===w.id});
-      return [k,w.judul,KAT[w.kat]?KAT[w.kat].n:'',[w.asal,w.noSurat].filter(Boolean).join(' / '),w.tenggat?fmtDate(w.tenggat):'-',STATUS[w.status],st.length?st.filter(function(x){return x.d}).length+'/'+st.length:'-',fl.map(function(f){return f.nama}).join('; ')]});
+      return [k,w.judul,KAT[w.kat]?KAT[w.kat].n:'',[w.asal,w.noSurat].filter(Boolean).join(' / '),w.tenggat?fmtDate(w.tenggat):'-',STATUS[w.status],st.length?st.filter(function(x){return x.d}).length+'/'+st.length:'-',fl.length?{items:fl.map(fileItem)}:'']});
     out.summary='Total '+ws.length+' pekerjaan: '+sel+' selesai, '+(ws.length-sel)+' masih berjalan.';
   }
   return out;
@@ -876,7 +1026,7 @@ function renderReport(){
 function paintPaper(){
   var r=buildReport(),p=db.profile,el=$('#paper');if(!el)return;
   var th=r.head.map(function(h){return '<th>'+esc(h)+'</th>'}).join('');
-  var tr=r.rows.length?r.rows.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+esc(c)+'</td>'}).join('')+'</tr>'}).join(''):'<tr><td colspan="'+r.head.length+'" style="text-align:center;padding:18px;color:#555">Belum ada data pada periode ini.</td></tr>';
+  var tr=r.rows.length?r.rows.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+cellHtml(c,true)+'</td>'}).join('')+'</tr>'}).join(''):'<tr><td colspan="'+r.head.length+'" style="text-align:center;padding:18px;color:#555">Belum ada data pada periode ini.</td></tr>';
   el.innerHTML='<div class="paper"><h2>'+esc(r.title)+'</h2><div class="per">Periode: '+esc(r.period)+'</div><dl>'+r.meta.map(function(m){return '<dt>'+m[0]+'</dt><dd>: '+esc(m[1])+'</dd>'}).join('')+'</dl>'
    +'<table><thead><tr>'+th+'</tr></thead><tbody>'+tr+'</tbody></table><p class="sum">'+esc(r.summary)+'</p>'
    +'<div class="sign"><div><span>Mengetahui,</span><span>'+esc(p.jabatanAtasan||'Atasan Langsung')+'</span><span class="sp"></span><b>'+esc(p.atasan||'(................................)')+'</b><span>NIP. '+esc(p.nipAtasan||'................................')+'</span></div>'
@@ -886,18 +1036,26 @@ function fileBase(r){return (r.title.replace(/\s+/g,'-'))+'_'+r.range[0]+'_'+r.r
 function exportXlsx(){
   var r=buildReport(),p=db.profile;
   var aoa=[[r.title.toUpperCase()],['Periode: '+r.period],[]].concat(r.meta.map(function(m){return [m[0],': '+m[1]]})).concat([[]]);
-  var headRow=aoa.length;aoa.push(r.head);r.rows.forEach(function(x){aoa.push(x)});
+  var headRow=aoa.length,links=[];aoa.push(r.head);
+  r.rows.forEach(function(row,ri){aoa.push(row.map(function(c,ci){
+    if(c&&c.items){var first=c.items.filter(function(i){return i.u})[0];if(first)links.push([headRow+1+ri,ci,first.u]);return c.items.map(function(i){return i.u?i.n+' - '+i.u:i.n}).join('\n')}
+    return c}))});
   aoa.push([]);aoa.push([r.summary]);aoa.push([]);
   aoa.push(['','Mengetahui,','','','',(p.kota||'')+', '+fmtDate(today())]);
   aoa.push(['',p.jabatanAtasan||'Atasan Langsung','','','','Pegawai yang melaporkan,']);aoa.push([]);aoa.push([]);aoa.push([]);
   aoa.push(['',p.atasan||'','','','',p.nama||'']);aoa.push(['',p.nipAtasan?'NIP. '+p.nipAtasan:'','','','',p.nip?'NIP. '+p.nip:'']);
   var fallback=function(){
-    var h='<html><head><meta charset="utf-8"></head><body><table border="1">'+aoa.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+esc(c)+'</td>'}).join('')+'</tr>'}).join('')+'</table></body></html>';
-    download(new Blob(['﻿'+h],{type:'application/vnd.ms-excel'}),fileBase(r)+'.xls');toast('Excel diunduh (format .xls)');
+    var h='<html><head><meta charset="utf-8"></head><body><table border="1"><tr><td colspan="'+r.head.length+'"><b>'+esc(r.title.toUpperCase())+'</b></td></tr><tr><td colspan="'+r.head.length+'">Periode: '+esc(r.period)+'</td></tr>'
+      +r.meta.map(function(m){return '<tr><td>'+esc(m[0])+'</td><td colspan="'+(r.head.length-1)+'">'+esc(m[1])+'</td></tr>'}).join('')
+      +'<tr>'+r.head.map(function(x){return '<th>'+esc(x)+'</th>'}).join('')+'</tr>'
+      +r.rows.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+cellHtml(c)+'</td>'}).join('')+'</tr>'}).join('')
+      +'<tr><td colspan="'+r.head.length+'">'+esc(r.summary)+'</td></tr></table></body></html>';
+    download(new Blob(['\ufeff'+h],{type:'application/vnd.ms-excel'}),fileBase(r)+'.xls');toast('Excel diunduh (format .xls)');
   };
   var go=function(){
     try{var ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=r.widths.map(function(w){return {wch:w}});
       ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:r.head.length-1}},{s:{r:1,c:0},e:{r:1,c:r.head.length-1}}];
+      links.forEach(function(L){var a=XLSX.utils.encode_cell({r:L[0],c:L[1]});if(ws[a])ws[a].l={Target:L[2]}});
       var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,r.sheet);XLSX.writeFile(wb,fileBase(r)+'.xlsx');toast('Excel diunduh')}
     catch(e){fallback()}
   };
@@ -905,13 +1063,13 @@ function exportXlsx(){
   var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=go;s.onerror=fallback;document.head.appendChild(s);
 }
 function exportDoc(){
-  var r=buildReport(),p=db.profile,land=r.head.length>6;
+  var r=buildReport(),p=db.profile,land=true;
   var th=r.head.map(function(h){return '<th>'+esc(h)+'</th>'}).join('');
-  var tr=r.rows.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+esc(c)+'</td>'}).join('')+'</tr>'}).join('')||'<tr><td colspan="'+r.head.length+'" align="center">Belum ada data pada periode ini.</td></tr>';
+  var tr=r.rows.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+cellHtml(c)+'</td>'}).join('')+'</tr>'}).join('')||'<tr><td colspan="'+r.head.length+'" align="center">Belum ada data pada periode ini.</td></tr>';
   var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>'+esc(r.title)+'</title>'
    +'<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->'
    +'<style>@page Section1{size:841.9pt 595.3pt;mso-page-orientation:landscape;margin:56pt 56pt 56pt 56pt}div.Section1{page:Section1}'
-   +'body{font-family:"Times New Roman",serif;font-size:11pt}h2{text-align:center;font-size:14pt;margin:0}p.c{text-align:center;margin:2pt 0 10pt}'
+   +'body{font-family:"Times New Roman",serif;font-size:11pt}a{color:#0B57D0}h2{text-align:center;font-size:14pt;margin:0}p.c{text-align:center;margin:2pt 0 10pt}'
    +'table.d{border-collapse:collapse;width:100%}table.d td,table.d th{border:1px solid #000;padding:4pt;vertical-align:top;font-size:10pt}table.d th{background:#E7E6E6}table.m td{border:0;padding:1pt 8pt 1pt 0;font-size:11pt}</style></head><body><div class="Section1">'
    +'<h2>'+esc(r.title.toUpperCase())+'</h2><p class="c">Periode: '+esc(r.period)+'</p>'
    +'<table class="m">'+r.meta.map(function(m){return '<tr><td>'+m[0]+'</td><td>: '+esc(m[1])+'</td></tr>'}).join('')+'</table><p></p>'
@@ -919,10 +1077,11 @@ function exportDoc(){
    +'<table width="100%" style="border:0"><tr><td width="50%" valign="top">Mengetahui,<br>'+esc(p.jabatanAtasan||'Atasan Langsung')+'<br><br><br><br><b>'+esc(p.atasan||'(................................)')+'</b><br>NIP. '+esc(p.nipAtasan||'................................')+'</td>'
    +'<td width="50%" valign="top">'+esc(p.kota||'................')+', '+esc(fmtDate(today()))+'<br>Pegawai yang melaporkan,<br><br><br><br><b>'+esc(p.nama||'(................................)')+'</b><br>NIP. '+esc(p.nip||'................................')+'</td></tr></table>'
    +'</div></body></html>';
-  download(new Blob(['﻿'+html],{type:'application/msword'}),fileBase(r)+'.doc');toast('Word diunduh');
+  download(new Blob(['\ufeff'+html],{type:'application/msword'}),fileBase(r)+'.doc');toast('Word diunduh');
 }
 
 /* ================= PENGATURAN ================= */
+function readDriveForm(){var g=function(i){var e=$('#'+i);return e?e.value.trim():''};return {url:g('s-durl'),sandi:g('s-dsandi'),folder:g('s-dfolder'),akses:g('s-dakses')==='tautan'?'tautan':'pribadi'}}
 function openSettings(){
   var p=db.profile,f=function(id,l,v,ph,full){return '<div class="field'+(full?' full':'')+'"><label for="'+id+'">'+l+'</label><input type="text" id="'+id+'" value="'+esc(v||'')+'" placeholder="'+esc(ph||'')+'"></div>'};
   openDlg('<div class="dh"><h2 id="dlgTitle">Profil dan data</h2><button class="iconbtn" type="button" data-act="closeDlg" aria-label="Tutup">'+ic('x')+'</button></div>'
@@ -930,6 +1089,12 @@ function openSettings(){
    +f('s-nama','Nama lengkap',p.nama,'',0)+f('s-nip','NIP',p.nip,'',0)+f('s-jab','Jabatan',p.jabatan,'Contoh: Analis Kebijakan Ahli Pertama',1)+f('s-unit','Unit kerja',p.unit,'',1)
    +f('s-atasan','Nama atasan langsung',p.atasan,'',0)+f('s-nipa','NIP atasan',p.nipAtasan,'',0)+f('s-jaba','Jabatan atasan',p.jabatanAtasan,'Contoh: Kepala Bagian Organisasi',0)+f('s-kota','Kota (untuk tanda tangan)',p.kota,'',0)
    +'<div class="field"><label for="s-target">Target jam kerja per hari</label><input type="number" id="s-target" step="0.5" min="1" max="12" value="'+(p.targetJam||7.5)+'"></div></div>'
+   +'<div class="field"><span class="lbl">Google Drive</span><p class="muted" style="margin:0;font-size:13px">Lampiran diunggah ke Drive lewat skrip milikmu sendiri, jadi laporan bisa berisi tautan. <button class="btn sm" type="button" data-act="driveGuide">Panduan pasang skrip</button></p>'
+   +'<div class="fgrid"><div class="field full"><label for="s-durl">Alamat skrip (Aplikasi web)</label><input type="text" id="s-durl" value="'+esc((p.drive||{}).url||'')+'" placeholder="https://script.google.com/macros/s/.../exec"></div>'
+   +'<div class="field"><label for="s-dsandi">Kata sandi skrip</label><input type="text" id="s-dsandi" value="'+esc((p.drive||{}).sandi||'')+'" autocomplete="off"></div>'
+   +'<div class="field"><label for="s-dakses">Siapa yang bisa membuka tautan</label><select id="s-dakses"><option value="pribadi"'+((p.drive||{}).akses!=='tautan'?' selected':'')+'>Hanya saya dan yang diberi akses</option><option value="tautan"'+((p.drive||{}).akses==='tautan'?' selected':'')+'>Siapa saja yang punya tautan</option></select></div>'
+   +'<div class="field full"><label for="s-dfolder">Link folder tujuan (opsional)</label><input type="text" id="s-dfolder" value="'+esc((p.drive||{}).folder||'')+'" placeholder="Kosongkan untuk memakai folder Jejak Kerja di Drive-mu"></div></div>'
+   +'<div class="row"><button class="btn sm" type="button" data-act="driveTest">Tes koneksi</button><span class="drv-st" id="drv-st" role="status"></span></div></div>'
    +'<div class="field"><span class="lbl">Cadangan data</span><div class="row"><button class="btn sm" type="button" data-act="backup">'+ic('down')+'Unduh cadangan (.json)</button><label class="btn sm" for="restoreFile">'+ic('up')+'Pulihkan dari cadangan</label><input type="file" id="restoreFile" accept="application/json,.json" class="sr"></div>'
    +'<small class="muted">Data tersimpan di peramban perangkat ini. Unduh cadangan sebelum ganti perangkat atau menghapus data peramban.</small></div>'
    +'<div class="field"><span class="lbl">Hapus data</span><div class="row"><button class="btn sm danger" type="button" data-act="wipe" id="btnWipe">Hapus semua data</button></div></div></form>'
@@ -944,6 +1109,24 @@ function wipeSamples(){
 var acts={
   mascot:function(){var p=mascotPool();ui.mi=(ui.mi+1)%p.length;say(p[ui.mi]);mascotAct('hop')},
   closeDlg:function(){closeDlg()},
+  backSettings:function(){openSettings()},
+  copyScript:function(){var ta=$('#gasCode'),ok=function(){toast('Kode skrip tersalin')},no=function(){ta.focus();ta.select();toast('Pilih semua lalu salin manual')};try{navigator.clipboard.writeText(GAS_CODE).then(ok,no)}catch(e){no()}},
+  driveTest:function(){var cfg=readDriveForm(),st=$('#drv-st');st.className='drv-st';
+    if(!cfg.url||!cfg.sandi){st.textContent='Isi alamat skrip dan kata sandi dulu.';st.className='drv-st bad';return}
+    st.textContent='Menghubungi skrip…';
+    driveCall(cfg,{aksi:'tes'}).then(function(j){st.textContent='Terhubung. Folder tujuan: '+j.folder;st.className='drv-st ok'}).catch(function(e){st.textContent=errMsg(e);st.className='drv-st bad'})},
+  driveGuide:function(){
+    openDlg('<div class="dh"><h2 id="dlgTitle">Pasang skrip Google Drive</h2><button class="iconbtn" type="button" data-act="backSettings" aria-label="Kembali">'+ic('x')+'</button></div>'
+     +'<div class="db"><ol class="guide">'
+     +'<li>Buka <b>script.google.com</b> dengan akun Google yang Drive-nya dipakai, lalu pilih <b>Proyek baru</b>.</li>'
+     +'<li>Hapus semua isi editor, lalu tempel kode di bawah. Ganti tulisan <b>GANTI-DENGAN-KATA-SANDI-ANDA</b> dengan kata sandi buatanmu sendiri, lalu simpan.</li>'
+     +'<li>Pilih fungsi <b>izin</b> di bagian atas editor, klik <b>Jalankan</b>, lalu setujui akses Drive. Kalau muncul peringatan "belum diverifikasi", pilih Lanjutan lalu lanjutkan. Skrip ini milikmu sendiri.</li>'
+     +'<li>Klik <b>Terapkan (Deploy)</b>, lalu <b>Deployment baru</b>. Jenis: <b>Aplikasi web</b>. Jalankan sebagai: <b>Saya</b>. Yang memiliki akses: <b>Siapa saja</b>. Klik Terapkan.</li>'
+     +'<li>Salin <b>URL aplikasi web</b> (berakhiran /exec). Kembali ke aplikasi ini, buka Profil, tempel URL dan kata sandi tadi, lalu klik <b>Tes koneksi</b>.</li></ol>'
+     +'<p class="muted" style="margin:0;font-size:13px">Akses "Siapa saja" hanya untuk menjalankan skrip. Tanpa kata sandi, tidak ada yang bisa menyimpan file. Kalau kamu mengubah kode di kemudian hari, buat Deployment baru.</p>'
+     +'<textarea class="code" id="gasCode" readonly spellcheck="false">'+esc(GAS_CODE)+'</textarea></div>'
+     +'<div class="df"><button class="btn" type="button" data-act="backSettings">Kembali ke Profil</button><span class="sp"></span><button class="btn primary" type="button" data-act="copyScript">'+ic('copy')+'Salin kode skrip</button></div>');
+  },
   closeFileDlg:function(){closeDlg();if(fReturnWork){var id=fReturnWork;fReturnWork=null;openWork(id)}},
   theme:function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');db.prefs.theme=cur==='dark'?'light':'dark';save();applyTheme()},
   settings:function(){openSettings()},
@@ -959,8 +1142,8 @@ var acts={
     db.works=db.works.filter(function(w){return w.id!==id});save();closeDlg();render(true);toast('Pekerjaan dihapus. Berkas dan catatannya tetap ada.');
   },
   fileForWork:function(){var r=commitWork();if(!r)return;fReturnWork=r.w.id;render(true);openFile(null,{workId:r.w.id})},
-  saveLog:function(){var l=commitLog();if(!l)return;ui.date=l.tgl;closeDlg();render(true);toast('Kegiatan dicatat')},
-  saveLogMore:function(){var l=commitLog();if(!l)return;ui.date=l.tgl;var end=l.selesai,d=l.tgl;render(true);openLog(null,{tgl:d,mulai:end,selesai:fromMin(toMin(end)+60)});toast('Tersimpan. Lanjut catat kegiatan berikutnya.')},
+  saveLog:function(){logWithUpload(function(l,r){ui.date=l.tgl;closeDlg();render(true);toast(r?storeMsg(r):'Kegiatan dicatat')})},
+  saveLogMore:function(){logWithUpload(function(l,r){ui.date=l.tgl;var end=l.selesai,d=l.tgl;render(true);openLog(null,{tgl:d,mulai:end,selesai:fromMin(toMin(end)+60)});toast(r?storeMsg(r):'Tersimpan. Lanjut catat kegiatan berikutnya.')})},
   delLog:function(){db.logs=db.logs.filter(function(l){return l.id!==lDraft.id});save();closeDlg();render(true);toast('Catatan dihapus')},
   saveFile:function(){
     var g=function(i){return $('#'+i).value},f=fDraft,er=$('#f-err');
@@ -968,13 +1151,18 @@ var acts={
     f.nama=g('f-n').trim();f.jenis=g('f-j');f.tgl=g('f-t');f.nomor=g('f-no').trim();f.workId=g('f-w');f.lokasi=g('f-l').trim();f.ket=g('f-k').trim();
     if(!f.nama&&fFile)f.nama=fFile.name.replace(/\.[^.]+$/,'');
     if(!f.nama){er.textContent='Nama berkas belum diisi.';return}
-    if(fFile&&fFile.size>25*1024*1024){er.textContent='File lebih dari 25 MB. Simpan di Drive lalu catat tautannya.';return}
-    var fin=function(ok){
-      var ex=db.files.filter(function(x){return x.id===f.id})[0];
+    var fin=function(r){
+      var ex=fileById(f.id);
       if(ex)db.files[db.files.indexOf(ex)]=f;else db.files.push(f);
-      save();closeDlg();var back=fReturnWork;fReturnWork=null;render(true);toast(ok===false?'Berkas dicatat, tetapi file gagal dilampirkan di peramban ini':'Berkas dicatat');if(back)openWork(back);
+      save();closeDlg();var back=fReturnWork;fReturnWork=null;render(true);toast(storeMsg(r));if(back)openWork(back);
     };
-    if(fFile){idbPut(f.id,fFile).then(function(){f.lampiran={nama:fFile.name,size:fFile.size,tipe:fFile.type};fin(true)}).catch(function(){fin(false)})}else fin(true);
+    if(!fFile){fin({where:'none'});return}
+    busyDlg(true,driveCfg()?'Mengunggah ke Google Drive…':'Menyimpan file…');
+    storeFile(f,fFile).then(function(r){
+      busyDlg(false);
+      if(r.where==='toobig'){er.textContent='File terlalu besar (maks. '+(driveCfg()?20:25)+' MB). Simpan di Drive lalu catat tautannya.';return}
+      fin(r);
+    });
   },
   delFile:function(b){
     if(!b.dataset.sure){b.dataset.sure=1;b.innerHTML=ic('trash')+'Yakin hapus?';return}
@@ -984,9 +1172,9 @@ var acts={
   saveSettings:function(){
     var g=function(i){return $('#'+i).value.trim()},p=db.profile;
     p.nama=g('s-nama');p.nip=g('s-nip');p.jabatan=g('s-jab');p.unit=g('s-unit');p.atasan=g('s-atasan');p.nipAtasan=g('s-nipa');p.jabatanAtasan=g('s-jaba');p.kota=g('s-kota');
-    var t=parseFloat($('#s-target').value.replace(',','.'));p.targetJam=t>0&&t<=12?t:7.5;save();closeDlg();render(true);toast('Profil disimpan');
+    var t=parseFloat($('#s-target').value.replace(',','.'));p.targetJam=t>0&&t<=12?t:7.5;p.drive=readDriveForm();save();closeDlg();render(true);toast('Profil disimpan');
   },
-  backup:function(){download(new Blob([JSON.stringify(db,null,1)],{type:'application/json'}),'jejak-kerja-cadangan-'+today()+'.json');toast('Cadangan diunduh')},
+  backup:function(){var cp=JSON.parse(JSON.stringify(db));if(cp.profile&&cp.profile.drive)delete cp.profile.drive.sandi;download(new Blob([JSON.stringify(cp,null,1)],{type:'application/json'}),'jejak-kerja-cadangan-'+today()+'.json');toast('Cadangan diunduh')},
   wipe:function(b){
     if(!b.dataset.sure){b.dataset.sure=1;b.textContent='Klik lagi untuk menghapus semuanya';return}
     db.files.forEach(function(f){if(f.lampiran)idbDel(f.id)});db.works=[];db.logs=[];db.files=[];save();closeDlg();render(true);toast('Semua data dihapus');
@@ -1021,9 +1209,10 @@ function wire(){
     if((b=t.closest('[data-tpl]'))){var tp=TPL[+b.dataset.tpl],pre={uraian:tp[0]};if(tp[1]){pre.mulai=tp[1];pre.selesai=tp[2]}openLog(null,pre);return}
     if((b=t.closest('[data-edit-file]'))){fReturnWork=b.dataset.fromWork?wDraft.id:null;if(b.dataset.fromWork){var rr=commitWork();if(!rr)return;fReturnWork=rr.w.id;render(true)}openFile(b.dataset.editFile);return}
     if((b=t.closest('[data-open-att]'))){openAtt(b.dataset.openAtt);return}
-    if((b=t.closest('[data-copy]'))){var f=db.files.filter(function(x){return x.id===b.dataset.copy})[0];
-      if(f){var ok=function(){toast('Lokasi disalin')},no=function(){toast('Salin manual: '+f.lokasi)};
-        try{navigator.clipboard.writeText(f.lokasi).then(ok,no)}catch(x){no()}}return}
+    if((b=t.closest('[data-copy]'))){var f=fileById(b.dataset.copy);
+      if(f){var cp=fileUrl(f)||f.lokasi,ok=function(){toast('Tersalin')},no=function(){toast('Salin manual: '+cp)};
+        try{navigator.clipboard.writeText(cp).then(ok,no)}catch(x){no()}}return}
+    if((b=t.closest('[data-drive-up]'))){uploadPending(b.dataset.driveUp,b);return}
     if((b=t.closest('[data-rj]'))){ui.rep.jenis=b.dataset.rj;renderReport();return}
     if((b=t.closest('[data-sub-del]'))){readWorkForm();wDraft.subtasks.splice(+b.dataset.subDel,1);paintSubs();return}
     if(t===dlg){closeDlg()}
@@ -1043,7 +1232,7 @@ function wire(){
     else if(t.id==='rto'){ui.rep.to=t.value||today();paintPaper()}
     else if(t.dataset&&t.dataset.subDone!=null){wDraft.subtasks[+t.dataset.subDone].d=t.checked?1:0}
     else if(t.id==='restoreFile'&&t.files&&t.files[0]){
-      var fr=new FileReader();fr.onload=function(){try{var d=JSON.parse(fr.result);if(!d||d.v!==1||!d.works||!d.logs)throw 0;db=d;db.prefs=db.prefs||{theme:''};db.files=db.files||[];save();applyTheme();closeDlg();render(true);toast('Data dipulihkan dari cadangan')}catch(x){toast('Berkas cadangan tidak valid')}};fr.readAsText(t.files[0]);
+      var fr=new FileReader();fr.onload=function(){try{var d=JSON.parse(fr.result);if(!d||d.v!==1||!d.works||!d.logs)throw 0;var keep=db.profile&&db.profile.drive;db=d;db.profile=db.profile||{};if(keep)db.profile.drive=keep;db.prefs=db.prefs||{theme:''};db.files=db.files||[];save();applyTheme();closeDlg();render(true);toast('Data dipulihkan dari cadangan')}catch(x){toast('Berkas cadangan tidak valid')}};fr.readAsText(t.files[0]);
     }
   });
   document.addEventListener('submit',function(e){
