@@ -497,6 +497,7 @@ function download(blob,name){
 var DEFAULT_CLIENT_ID = '1005323249725-c6kjp7t9vhsg4le8cl2c4c5l82cg15o2.apps.googleusercontent.com';
 var DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file email profile';
 var FOLDER_UTAMA = 'Jejak Kerja';
+var MAX_UPLOAD = 5*1024*1024; // upload multipart cocok sampai sekitar 5 MB
 
 var fileById=function(id){return db.files.filter(function(f){return f.id===id})[0]};
 var isUrl=function(x){return /^https?:\/\//i.test(x||'')};
@@ -522,9 +523,21 @@ function bersihNama_(s){
 }
 function errMsg(e){
   var m=(e&&e.message)||String(e);
-  if(e instanceof TypeError||/Failed to fetch|NetworkError|Load failed/i.test(m))
-    return 'Gagal menghubungi Google Drive. Periksa koneksi internet Anda.';
+  if(/^Failed to fetch$|^NetworkError|^Load failed$/i.test(m))
+    return 'Gagal menghubungi Google Drive ('+m+'). Periksa koneksi internet Anda.';
   return m;
+}
+/* fetch ke Google dengan pesan galat yang jelas: langkah mana yang gagal + alasan dari Google */
+function gfetch(step,url,opt){
+  return fetch(url,opt).catch(function(e){
+    throw new Error('['+step+'] tidak tersambung: '+((e&&e.message)||e)+(navigator.onLine===false?' (perangkat offline)':''));
+  }).then(function(r){
+    if(r.ok)return r;
+    return r.text().then(function(t){
+      var m='';try{var j=JSON.parse(t);m=(j.error&&(j.error.message||j.error.status))||''}catch(_){}
+      throw new Error('['+step+'] ditolak Google ('+r.status+')'+(m?': '+String(m).slice(0,140):''));
+    });
+  });
 }
 
 function ensureGoogleToken(interactive){
@@ -544,7 +557,7 @@ function ensureGoogleToken(interactive){
       hint:d.email||'',
       callback:function(resp){
         if(resp.error)return rej(new Error('Login Google gagal atau dibatalkan ('+resp.error+')'));
-        db.profile.drive=Object.assign({},db.profile.drive||{akses:'tautan',folder:''},{
+        db.profile.drive=Object.assign({},db.profile.drive||{akses:'pribadi'},{
           connected:true,
           token:resp.access_token,
           exp:Date.now()+((resp.expires_in||3599)*1000)
@@ -558,7 +571,7 @@ function ensureGoogleToken(interactive){
         }).catch(function(){save();res(resp.access_token)});
       },
       error_callback:function(err){
-        rej(new Error('Gagal membuka jendela login Google ('+(err&&err.type||'popup')+')'));
+        rej(new Error('Sesi Google habis dan jendela login tidak bisa dibuka ('+(err&&err.type||'popup')+'). Buka Profil, tekan Hubungkan ulang, lalu coba lagi.'));
       }
     });
     client.requestAccessToken({prompt:interactive?'select_account':''});
@@ -570,37 +583,28 @@ function gdriveSubFolder_(token,nama,parentId){
   var q="mimeType='application/vnd.google-apps.folder' and trashed=false and name='"+clean.replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'";
   if(parentId)q+=" and '"+parentId+"' in parents";
   var url='https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent(q)+'&fields=files(id,name,webViewLink)&spaces=drive';
-  return fetch(url,{headers:{Authorization:'Bearer '+token}})
-    .then(function(r){if(!r.ok)throw new Error('Gagal mengakses folder Google Drive ('+r.status+')');return r.json()})
+  return gfetch('cari folder',url,{headers:{Authorization:'Bearer '+token}})
+    .then(function(r){return r.json()})
     .then(function(j){
       if(j.files&&j.files.length)return j.files[0];
       var meta={name:clean,mimeType:'application/vnd.google-apps.folder'};
       if(parentId)meta.parents=[parentId];
-      return fetch('https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink',{
+      return gfetch('buat folder','https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink',{
         method:'POST',
         headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
         body:JSON.stringify(meta)
-      }).then(function(r2){if(!r2.ok)throw new Error('Gagal membuat folder di Google Drive');return r2.json()});
+      }).then(function(r2){return r2.json()});
     });
 }
 
 function gdriveRootFolder_(token,cfg){
-  var customId=folderIdFrom(cfg&&cfg.folder);
-  if(customId){
-    return fetch('https://www.googleapis.com/drive/v3/files/'+customId+'?fields=id,name,webViewLink',{
-      headers:{Authorization:'Bearer '+token}
-    }).then(function(r){
-      if(!r.ok)throw new Error('Folder tujuan tidak ditemukan atau tidak memiliki izin akses.');
-      return r.json();
-    });
-  }
   return gdriveSubFolder_(token,FOLDER_UTAMA,'');
 }
 
 function driveUpload(f,blob){
   var cfg=driveCfg();
   if(!cfg)return Promise.reject(new Error('Akun Google Drive belum dihubungkan.'));
-  if(blob.size>25*1024*1024)return Promise.reject(new Error('File lebih dari 25 MB. Kecilkan dulu atau unggah langsung lewat Drive.'));
+  if(blob.size>MAX_UPLOAD)return Promise.reject(new Error('File lebih dari 5 MB. Kecilkan dulu atau unggah langsung lewat Drive.'));
   var w=workById(f.workId),sub=[(f.tgl||today()).slice(0,7)];
   if(w)sub.push(w.judul);
   var tokenAktif='';
@@ -624,15 +628,15 @@ function driveUpload(f,blob){
         '\r\n--'+boundary+'--'
       ],{type:'multipart/related; boundary='+boundary});
 
-      return fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',{
+      return gfetch('unggah file','https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',{
         method:'POST',
-        headers:{Authorization:'Bearer '+tokenAktif},
+        headers:{Authorization:'Bearer '+tokenAktif,'Content-Type':'multipart/related; boundary='+boundary},
         body:bodyBlob
       });
     })
-    .then(function(r){if(!r.ok)throw new Error('Gagal mengunggah file ke Google Drive ('+r.status+')');return r.json()})
+    .then(function(r){return r.json()})
     .then(function(fileRes){
-      if(cfg.akses!=='pribadi'){
+      if(cfg.akses==='tautan'){
         return fetch('https://www.googleapis.com/drive/v3/files/'+fileRes.id+'/permissions',{
           method:'POST',
           headers:{Authorization:'Bearer '+tokenAktif,'Content-Type':'application/json'},
@@ -645,7 +649,7 @@ function driveUpload(f,blob){
 }
 
 function storeFile(f,blob){
-  var cfg=driveCfg(),limit=25*1024*1024;
+  var cfg=driveCfg(),limit=MAX_UPLOAD;
   if(blob.size>limit)return Promise.resolve({where:'toobig'});
   var local=function(pending,err){
     return idbPut(f.id,blob).then(function(){
@@ -663,7 +667,8 @@ function storeFile(f,blob){
 function uploadPending(id,btn){
   var f=fileById(id);if(!f||!driveCfg())return;
   if(btn){btn.disabled=true;btn.textContent='Mengunggah…'}
-  idbGet(id).then(function(blob){
+  /* token diminta dulu, langsung dari klik tombol, supaya jendela login Google tidak diblokir peramban */
+  ensureGoogleToken(false).then(function(){return idbGet(id)}).then(function(blob){
     if(!blob)throw new Error('File di perangkat tidak ditemukan');
     if(!blob.name)blob=new File([blob],f.lampiran&&f.lampiran.nama||f.nama,{type:blob.type});
     return driveUpload(f,blob);
@@ -964,7 +969,7 @@ function logWithUpload(cb){
   busyDlg(true,driveCfg()?'Mengunggah ke Google Drive…':'Menyimpan file…');
   storeFile(f,fl).then(function(r){
     busyDlg(false);
-    if(r.where==='toobig'){$('#l-err').textContent='File terlalu besar (maks. 25 MB).';return}
+    if(r.where==='toobig'){$('#l-err').textContent='File terlalu besar (maks. 5 MB).';return}
     db.files.push(f);l.fileId=f.id;persistLog(l);cb(l,r);
   });
 }
@@ -1011,7 +1016,7 @@ function openFile(id,preset){
    +'<div class="field"><label for="f-w">Pekerjaan terkait</label><select id="f-w"><option value="">Tidak terkait</option>'+db.works.map(function(w){return '<option value="'+w.id+'"'+(w.id===fDraft.workId?' selected':'')+'>'+esc(w.judul)+'</option>'}).join('')+'</select></div>'
    +'<div class="field full"><label for="f-l">Lokasi penyimpanan atau tautan</label><input type="text" id="f-l" value="'+esc(fDraft.lokasi)+'" placeholder="Tautan Drive, atau jalur folder: Laptop > Dokumen > SOP"></div>'
    +'<div class="field full"><label for="f-file">Lampirkan file (opsional)</label><input type="file" id="f-file">'
-   +(fDraft.drive?'<small class="muted">Tersimpan di Google Drive. <a href="'+esc(fDraft.drive.url)+'" target="_blank" rel="noopener">Buka</a>. Pilih file baru untuk menggantinya.</small>':fDraft.lampiran?'<small class="muted">Terlampir di perangkat: '+esc(fDraft.lampiran.nama)+'. Pilih file baru untuk menggantinya.</small>':(driveCfg()?'<small class="muted">Diunggah langsung ke Google Drive Anda (maks. 25 MB), tautannya tercatat otomatis.</small>':'<small class="muted">Tersimpan di perangkat ini (maks. 25 MB). Hubungkan Google Drive di Profil untuk mengunggah ke Drive.</small>'))+'</div>'
+   +(fDraft.drive?'<small class="muted">Tersimpan di Google Drive. <a href="'+esc(fDraft.drive.url)+'" target="_blank" rel="noopener">Buka</a>. Pilih file baru untuk menggantinya.</small>':fDraft.lampiran?'<small class="muted">Terlampir di perangkat: '+esc(fDraft.lampiran.nama)+'. Pilih file baru untuk menggantinya.</small>':(driveCfg()?'<small class="muted">Diunggah langsung ke Google Drive Anda (maks. 5 MB), tautannya tercatat otomatis.</small>':'<small class="muted">Tersimpan di perangkat ini (maks. 5 MB). Hubungkan Google Drive di Profil untuk mengunggah ke Drive.</small>'))+'</div>'
    +'<div class="field full"><label for="f-k">Keterangan</label><input type="text" id="f-k" value="'+esc(fDraft.ket)+'"></div></div><div class="err" id="f-err"></div></form>'
    +'<div class="df">'+(f?'<button class="btn danger" type="button" data-act="delFile">'+ic('trash')+'Hapus</button>':'')+'<span class="sp"></span><button class="btn" type="button" data-act="closeFileDlg">Batal</button><button class="btn primary" type="button" data-act="saveFile">Simpan</button></div>');
 }
@@ -1121,8 +1126,7 @@ function readDriveForm(){
   var g=function(i){var e=$('#'+i);return e?e.value.trim():''};
   var prev=(db.profile&&db.profile.drive)||{};
   return Object.assign({},prev,{
-    folder:g('s-dfolder'),
-    akses:g('s-dakses')==='pribadi'?'pribadi':'tautan',
+    akses:$('#s-dakses')?(g('s-dakses')==='tautan'?'tautan':'pribadi'):(prev.akses==='tautan'?'tautan':'pribadi'),
     clientId:g('s-dclient')||prev.clientId||''
   });
 }
@@ -1143,8 +1147,7 @@ function openSettings(){
       +'<button class="btn primary" type="button" data-act="driveLogin">Login dengan Google</button></div>')
    +'<span class="drv-st" id="drv-st" role="status"></span>'
    +'<div class="fgrid">'
-   +'<div class="field"><label for="s-dakses">Siapa yang bisa membuka tautan surat</label><select id="s-dakses"><option value="tautan"'+(d.akses!=='pribadi'?' selected':'')+'>Siapa saja yang punya tautan (Untuk laporan)</option><option value="pribadi"'+(d.akses==='pribadi'?' selected':'')+'>Hanya saya</option></select></div>'
-   +'<div class="field"><label for="s-dfolder">Link folder tujuan (opsional)</label><input type="text" id="s-dfolder" value="'+esc(d.folder||'')+'" placeholder="Kosongkan untuk otomatis buat folder Jejak Kerja"></div>'
+   +'<div class="field"><label for="s-dakses">Siapa yang bisa membuka tautan surat</label><select id="s-dakses"><option value="pribadi"'+(d.akses!=='tautan'?' selected':'')+'>Hanya saya (disarankan)</option><option value="tautan"'+(d.akses==='tautan'?' selected':'')+'>Siapa saja yang punya tautan</option></select></div>'
    +'</div>'
    +'<details style="font-size:12.5px;color:var(--muted)"><summary style="cursor:pointer">Pengaturan Admin (Google OAuth Client ID)</summary>'
    +'<div class="field" style="margin-top:8px"><label for="s-dclient">Client ID (.apps.googleusercontent.com)</label><input type="text" id="s-dclient" value="'+esc(d.clientId||'')+'" placeholder="Kosongkan jika sudah ditanam di DEFAULT_CLIENT_ID"></div></details>'
@@ -1185,7 +1188,7 @@ var acts={
     if(d&&d.token&&window.google&&google.accounts&&google.accounts.oauth2){
       try{google.accounts.oauth2.revoke(d.token,function(){})}catch(e){}
     }
-    db.profile.drive={connected:false,akses:(d&&d.akses)||'tautan',folder:(d&&d.folder)||'',clientId:(d&&d.clientId)||''};
+    db.profile.drive={connected:false,akses:(d&&d.akses)||'pribadi',clientId:(d&&d.clientId)||''};
     save();
     if(dlg.open&&$('#sform'))openSettings();
     render(true);
@@ -1237,7 +1240,7 @@ var acts={
     busyDlg(true,driveCfg()?'Mengunggah ke Google Drive…':'Menyimpan file…');
     storeFile(f,fFile).then(function(r){
       busyDlg(false);
-      if(r.where==='toobig'){er.textContent='File terlalu besar (maks. 25 MB). Simpan di Drive lalu catat tautannya.';return}
+      if(r.where==='toobig'){er.textContent='File terlalu besar (maks. 5 MB). Simpan di Drive lalu catat tautannya.';return}
       fin(r);
     });
   },
