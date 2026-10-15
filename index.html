@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
 <title>Jejak Kerja</title>
+<meta name="author" content="R.P.H - Indragiri Hulu">
 <meta name="theme-color" content="#0A7C74">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -84,6 +85,9 @@ h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:
   .side .foot{margin-top:auto;display:grid;gap:8px}
   .main{padding-top:24px}
 }
+.tm{text-align:center;font-size:12px;letter-spacing:.04em;color:var(--muted);opacity:.85;padding:18px 16px 28px}
+.tm b{font-weight:600;color:var(--ink);opacity:.8}
+.paper .tmk{margin-top:14px;text-align:right;font-size:10.5px;color:#777;font-style:italic}
 .side .who{font-size:13px;color:var(--muted);line-height:1.4;padding:0 4px}
 .side .who b{display:block;color:var(--ink);font-size:14px}
 .page-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin:8px 0 18px}
@@ -335,6 +339,7 @@ textarea{resize:vertical;min-height:84px}
       </div>
     </header>
     <main id="view" tabindex="-1"></main>
+    <footer class="tm">&copy; <b>R.P.H</b> &middot; Indragiri Hulu</footer>
   </div>
 </div>
 <nav class="tabbar" id="navBar" aria-label="Navigasi utama"></nav>
@@ -497,6 +502,7 @@ function download(blob,name){
 var DEFAULT_CLIENT_ID = '1005323249725-c6kjp7t9vhsg4le8cl2c4c5l82cg15o2.apps.googleusercontent.com';
 var DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file email profile';
 var FOLDER_UTAMA = 'Jejak Kerja';
+var TM = 'R.P.H - Indragiri Hulu';
 var MAX_UPLOAD = 5*1024*1024; // upload multipart cocok sampai sekitar 5 MB
 
 var fileById=function(id){return db.files.filter(function(f){return f.id===id})[0]};
@@ -1071,7 +1077,7 @@ function paintPaper(){
   el.innerHTML='<div class="paper"><h2>'+esc(r.title)+'</h2><div class="per">Periode: '+esc(r.period)+'</div><dl>'+r.meta.map(function(m){return '<dt>'+m[0]+'</dt><dd>: '+esc(m[1])+'</dd>'}).join('')+'</dl>'
    +'<table><thead><tr>'+th+'</tr></thead><tbody>'+tr+'</tbody></table><p class="sum">'+esc(r.summary)+'</p>'
    +'<div class="sign"><div><span>Mengetahui,</span><span>'+esc(p.jabatanAtasan||'Atasan Langsung')+'</span><span class="sp"></span><b>'+esc(p.atasan||'(................................)')+'</b><span>NIP. '+esc(p.nipAtasan||'................................')+'</span></div>'
-   +'<div class="r"><span>'+esc(p.kota||'................')+', '+esc(fmtDate(today()))+'</span><span>Pegawai yang melaporkan,</span><span class="sp"></span><b>'+esc(p.nama||'(................................)')+'</b><span>NIP. '+esc(p.nip||'................................')+'</span></div></div></div>';
+   +'<div class="r"><span>'+esc(p.kota||'................')+', '+esc(fmtDate(today()))+'</span><span>Pegawai yang melaporkan,</span><span class="sp"></span><b>'+esc(p.nama||'(................................)')+'</b><span>NIP. '+esc(p.nip||'................................')+'</span></div></div><div class="tmk">'+esc(TM)+'</div></div>';
 }
 function fileBase(r){return (r.title.replace(/\s+/g,'-'))+'_'+r.range[0]+'_'+r.range[1]}
 function exportXlsx(){
@@ -1084,13 +1090,13 @@ function exportXlsx(){
   aoa.push([]);aoa.push([r.summary]);aoa.push([]);
   aoa.push(['','Mengetahui,','','','',(p.kota||'')+', '+fmtDate(today())]);
   aoa.push(['',p.jabatanAtasan||'Atasan Langsung','','','','Pegawai yang melaporkan,']);aoa.push([]);aoa.push([]);aoa.push([]);
-  aoa.push(['',p.atasan||'','','','',p.nama||'']);aoa.push(['',p.nipAtasan?'NIP. '+p.nipAtasan:'','','','',p.nip?'NIP. '+p.nip:'']);
+  aoa.push(['',p.atasan||'','','','',p.nama||'']);aoa.push(['',p.nipAtasan?'NIP. '+p.nipAtasan:'','','','',p.nip?'NIP. '+p.nip:'']);aoa.push([]);aoa.push([TM]);
   var fallback=function(){
     var h='<html><head><meta charset="utf-8"></head><body><table border="1"><tr><td colspan="'+r.head.length+'"><b>'+esc(r.title.toUpperCase())+'</b></td></tr><tr><td colspan="'+r.head.length+'">Periode: '+esc(r.period)+'</td></tr>'
       +r.meta.map(function(m){return '<tr><td>'+esc(m[0])+'</td><td colspan="'+(r.head.length-1)+'">'+esc(m[1])+'</td></tr>'}).join('')
       +'<tr>'+r.head.map(function(x){return '<th>'+esc(x)+'</th>'}).join('')+'</tr>'
       +r.rows.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+cellHtml(c)+'</td>'}).join('')+'</tr>'}).join('')
-      +'<tr><td colspan="'+r.head.length+'">'+esc(r.summary)+'</td></tr></table></body></html>';
+      +'<tr><td colspan="'+r.head.length+'">'+esc(r.summary)+'</td></tr><tr><td colspan="'+r.head.length+'"><i>'+esc(TM)+'</i></td></tr></table></body></html>';
     download(new Blob(['\ufeff'+h],{type:'application/vnd.ms-excel'}),fileBase(r)+'.xls');toast('Excel diunduh (format .xls)');
   };
   var go=function(){
@@ -1117,7 +1123,7 @@ function exportDoc(){
    +'<table class="d"><thead><tr>'+th+'</tr></thead><tbody>'+tr+'</tbody></table><p>'+esc(r.summary)+'</p><p></p>'
    +'<table width="100%" style="border:0"><tr><td width="50%" valign="top">Mengetahui,<br>'+esc(p.jabatanAtasan||'Atasan Langsung')+'<br><br><br><br><b>'+esc(p.atasan||'(................................)')+'</b><br>NIP. '+esc(p.nipAtasan||'................................')+'</td>'
    +'<td width="50%" valign="top">'+esc(p.kota||'................')+', '+esc(fmtDate(today()))+'<br>Pegawai yang melaporkan,<br><br><br><br><b>'+esc(p.nama||'(................................)')+'</b><br>NIP. '+esc(p.nip||'................................')+'</td></tr></table>'
-   +'</div></body></html>';
+   +'<p style="text-align:right;font-size:9pt;color:#777"><i>'+esc(TM)+'</i></p></div></body></html>';
   download(new Blob(['\ufeff'+html],{type:'application/msword'}),fileBase(r)+'.doc');toast('Word diunduh');
 }
 
