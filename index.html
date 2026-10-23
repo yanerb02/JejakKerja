@@ -108,6 +108,8 @@ h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:
 .card{background:var(--surface);border-radius:18px;box-shadow:var(--shadow)}
 .section{margin-top:26px}
 .section>h2{font-size:18px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.bfc{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}.bfc:empty{display:none}
+.chip.bf{padding:3px 4px 3px 10px;background:var(--accent-soft);color:var(--ink)}.chip.bf button{border:0;background:rgba(0,0,0,.12);color:inherit;width:20px;height:20px;border-radius:50%;font-size:14px;line-height:1;cursor:pointer;padding:0}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--surface2);font-size:12px;font-weight:600;color:var(--ink);max-width:100%}
 .chip i{width:8px;height:8px;border-radius:50%;background:var(--dot,var(--c-lain));flex:none}
 .chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -841,6 +843,8 @@ function storeMsg(r){
 var cellTxt=function(c){return c&&c.items?c.items.map(function(i){return i.n}).join('\n'):String(c==null?'':c)};
 var cellHtml=function(c,blank){return c&&c.items?c.items.map(function(i){return i.u?'<a href="'+esc(i.u)+'"'+(blank?' target="_blank" rel="noopener"':'')+'>'+esc(i.n)+'</a>':esc(i.n)}).join('<br>'):esc(c)};
 var fileItem=function(f){return {n:f.nama,u:fileUrl(f)}};
+var MAX_BUKTI=5;
+function logFileIds(l){return (l.fileIds&&l.fileIds.length?l.fileIds:(l.fileId?[l.fileId]:[])).filter(function(id){return fileById(id)})}
 
 /* ================= kerangka & navigasi ================= */
 var LOGO='<img src="'+ICON192+'" alt="" width="34" height="34">';
@@ -1074,7 +1078,7 @@ function renderLogs(){
    +'<div class="week" role="group" aria-label="Minggu ini">'+wk+'</div>'
    +'<div class="card">'+(logs.length?logs.map(function(l){var w=workById(l.workId),k=katOf(w);
       return '<button class="lrow" type="button" data-edit-log="'+l.id+'"><span class="tm">'+l.mulai+'<small>'+l.selesai+'</small></span><span class="tx">'+esc(l.uraian)+'</span>'
-       +'<span class="mt"><span>'+fmtDur(dur(l))+'</span>'+(w?'<span class="chip" style="--dot:'+k.c+'"><i></i><span>'+esc(w.judul)+'</span></span>':'')+(l.output?'<span>Output: '+esc(l.output)+' '+esc(l.satuan||'')+'</span>':'')+(fileById(l.fileId)?'<span>Berkas: '+esc(fileById(l.fileId).nama)+'</span>':'')+(l.bukti?'<span>Bukti: '+esc(l.bukti)+'</span>':'')+'</span></button>'}).join('')
+       +'<span class="mt"><span>'+fmtDur(dur(l))+'</span>'+(w?'<span class="chip" style="--dot:'+k.c+'"><i></i><span>'+esc(w.judul)+'</span></span>':'')+(l.output?'<span>Output: '+esc(l.output)+' '+esc(l.satuan||'')+'</span>':'')+(logFileIds(l).length?'<span>Berkas: '+logFileIds(l).map(function(id){return esc(fileById(id).nama)}).join(', ')+'</span>':'')+(l.bukti?'<span>Bukti: '+esc(l.bukti)+'</span>':'')+'</span></button>'}).join('')
      :'<div class="empty" style="margin:14px"><b>Belum ada kegiatan di tanggal ini</b>Pakai tombol Catat kegiatan atau pilih templat di bawah.</div>')+'</div>'
    +'<div class="totals"><span>Total tercatat <b>'+fmtDur(mins)+'</b></span><span>Target <b>'+String(db.profile.targetJam||7.5).replace('.',',')+' j</b></span><span>'+(sisa?'Kurang <b>'+fmtDur(sisa)+'</b>':'Target hari ini terpenuhi')+'</span></div>'
    +'<div class="section"><h2 style="font-size:15px">Templat cepat</h2><div class="tpl">'+TPL.map(function(t,i){return '<button class="fchip" type="button" data-tpl="'+i+'">'+esc(t[0])+'</button>'}).join('')+'</div></div>';
@@ -1083,7 +1087,8 @@ var lDraft=null;
 function openLog(id,preset){
   var l=id?db.logs.filter(function(x){return x.id===id})[0]:null;
   var todayLogs=logsOn(ui.date).sort(byTime),last=todayLogs.length?todayLogs[todayLogs.length-1].selesai:'07:30';
-  lDraft=l?l:Object.assign({id:uid(),tgl:ui.date,mulai:last,selesai:fromMin(Math.min(1439,toMin(last)+60)),uraian:'',workId:'',output:'',satuan:'',bukti:'',fileId:''},preset||{});
+  lDraft=l?JSON.parse(JSON.stringify(l)):Object.assign({id:uid(),tgl:ui.date,mulai:last,selesai:fromMin(Math.min(1439,toMin(last)+60)),uraian:'',workId:'',output:'',satuan:'',bukti:'',fileId:'',fileIds:[]},preset||{});
+  lDraft.fileIds=logFileIds(lDraft).slice();
   var aktif=db.works.filter(function(w){return w.status!=='selesai'||w.id===lDraft.workId});
   openDlg('<div class="dh"><h2 id="dlgTitle">'+(l?'Ubah kegiatan':'Catat kegiatan')+'</h2><button class="iconbtn" type="button" data-act="closeDlg" aria-label="Tutup">'+ic('x')+'</button></div>'
    +'<form id="lform" class="db" autocomplete="off"><div class="fgrid">'
@@ -1094,16 +1099,25 @@ function openLog(id,preset){
    +'<div class="field full"><label for="l-w">Pekerjaan terkait</label><select id="l-w"><option value="">Tidak terkait pekerjaan tertentu</option>'+aktif.map(function(w){return '<option value="'+w.id+'"'+(w.id===lDraft.workId?' selected':'')+'>'+esc(w.judul)+'</option>'}).join('')+'</select></div>'
    +'<div class="field"><label for="l-o">Output (jumlah)</label><input type="text" id="l-o" inputmode="decimal" value="'+esc(lDraft.output)+'" placeholder="1"></div>'
    +'<div class="field"><label for="l-sat">Satuan</label><input type="text" id="l-sat" list="satuan" value="'+esc(lDraft.satuan)+'" placeholder="dokumen"><datalist id="satuan"><option value="dokumen"><option value="surat"><option value="kegiatan"><option value="laporan"><option value="berkas"><option value="bahan"><option value="orang"></datalist></div>'
-   +'<div class="field full"><label for="l-bf">Berkas bukti dukung</label><select id="l-bf"><option value="">Tidak ada</option>'+db.files.slice().sort(function(a,b){return (b.tgl||'').localeCompare(a.tgl||'')}).map(function(f){return '<option value="'+f.id+'"'+(f.id===lDraft.fileId?' selected':'')+'>'+esc(f.nama)+' ('+esc(f.jenis)+')</option>'}).join('')+'</select></div>'
-   +'<div class="field full"><label for="l-file">Atau unggah file bukti baru</label><input type="file" id="l-file"><small class="muted">'+(driveCfg()?'Diunggah ke Google Drive, tautannya otomatis masuk ke laporan.':'Tersimpan di perangkat ini. Hubungkan Google Drive di Profil agar laporan berisi tautan.')+'</small></div>'
+   +'<div class="field full"><label for="l-bf">Berkas bukti dukung <small class="muted">(maksimal '+MAX_BUKTI+')</small></label><div class="bfc" id="l-chips"></div><select id="l-bf"></select></div>'
+   +'<div class="field full"><label for="l-file">Atau unggah file bukti baru</label><input type="file" id="l-file" multiple><small class="muted" id="l-fhint"></small><small class="muted">'+(driveCfg()?'Diunggah ke Google Drive, tautannya otomatis masuk ke laporan.':'Tersimpan di perangkat ini. Hubungkan Google Drive di Profil agar laporan berisi tautan.')+'</small></div>'
    +'<div class="field full"><label for="l-b">Keterangan bukti (opsional)</label><input type="text" id="l-b" value="'+esc(lDraft.bukti)+'" placeholder="Nomor surat, tautan foto, atau catatan"></div></div>'
    +'<div class="err" id="l-err"></div></form>'
    +'<div class="df">'+(l?'<button class="btn danger" type="button" data-act="delLog">'+ic('trash')+'Hapus</button>':'')+'<span class="sp"></span><button class="btn" type="button" data-act="closeDlg">Batal</button>'
    +(l?'':'<button class="btn" type="button" data-act="saveLogMore">Simpan dan tambah lagi</button>')+'<button class="btn primary" type="button" data-act="saveLog">Simpan</button></div>');
+  paintBukti();
+}
+function paintBukti(){
+  var ids=lDraft.fileIds||[],room=MAX_BUKTI-ids.length,box=$('#l-chips'),sel=$('#l-bf'),inp=$('#l-file'),hint=$('#l-fhint');
+  if(!box||!sel)return;
+  box.innerHTML=ids.map(function(id){var f=fileById(id);return f?'<span class="chip bf"><span>'+esc(f.nama)+'</span><button type="button" data-rmbf="'+id+'" aria-label="Lepas '+esc(f.nama)+'">&times;</button></span>':''}).join('');
+  sel.innerHTML='<option value="">'+(room>0?'Tambah dari berkas tersimpan…':'Sudah '+MAX_BUKTI+' bukti')+'</option>'+db.files.filter(function(f){return ids.indexOf(f.id)<0}).sort(function(a,b){return (b.tgl||'').localeCompare(a.tgl||'')}).map(function(f){return '<option value="'+f.id+'">'+esc(f.nama)+' ('+esc(f.jenis)+')</option>'}).join('');
+  sel.disabled=room<=0;if(inp){inp.disabled=room<=0;}
+  if(hint)hint.textContent=room>0?'Bisa pilih beberapa file sekaligus. Sisa slot: '+room+' dari '+MAX_BUKTI+'.':'Slot bukti penuh. Lepas salah satu untuk menambah.';
 }
 function readLog(){
   var g=function(i){return $('#'+i).value};
-  var l=lDraft;l.tgl=g('l-tgl');l.mulai=g('l-m');l.selesai=g('l-s');l.uraian=g('l-u').trim();l.workId=g('l-w');l.output=g('l-o').trim();l.satuan=g('l-sat').trim();l.bukti=g('l-b').trim();l.fileId=g('l-bf');
+  var l=lDraft;l.tgl=g('l-tgl');l.mulai=g('l-m');l.selesai=g('l-s');l.uraian=g('l-u').trim();l.workId=g('l-w');l.output=g('l-o').trim();l.satuan=g('l-sat').trim();l.bukti=g('l-b').trim();l.fileIds=(lDraft.fileIds||[]).slice(0,MAX_BUKTI);l.fileId=l.fileIds[0]||'';
   var er=$('#l-err');
   if(!l.tgl||!l.mulai||!l.selesai){er.textContent='Tanggal dan jam wajib diisi.';return null}
   if(toMin(l.selesai)<=toMin(l.mulai)){er.textContent='Jam selesai harus setelah jam mulai.';return null}
@@ -1118,14 +1132,22 @@ function persistLog(l){
 }
 function logWithUpload(cb){
   var l=readLog();if(!l)return;
-  var inp=$('#l-file'),fl=inp&&inp.files&&inp.files[0]||null;
-  if(!fl){persistLog(l);cb(l,null);return}
-  var f={id:uid(),workId:l.workId,nama:fl.name.replace(/\.[^.]+$/,''),jenis:'Dokumen final',nomor:'',tgl:l.tgl,lokasi:'',ket:'Bukti kegiatan '+fmtDate(l.tgl)};
+  var inp=$('#l-file'),fls=inp&&inp.files?Array.prototype.slice.call(inp.files):[];
+  if(!fls.length){persistLog(l);cb(l,null);return}
+  var room=MAX_BUKTI-l.fileIds.length;
+  if(fls.length>room){$('#l-err').textContent='Maksimal '+MAX_BUKTI+' bukti per kegiatan. Sisa slot: '+Math.max(room,0)+', kamu memilih '+fls.length+' file.';return}
+  for(var i=0;i<fls.length;i++)if(fls[i].size>MAX_UPLOAD){$('#l-err').textContent='File "'+fls[i].name+'" terlalu besar (maks. 5 MB).';return}
   busyDlg(true,driveCfg()?'Mengunggah ke Google Drive…':'Menyimpan file…');
-  storeFile(f,fl).then(function(r){
+  var made=[],res=[];
+  fls.reduce(function(p,fl,i){return p.then(function(){
+    var f={id:uid(),workId:l.workId,nama:fl.name.replace(/\.[^.]+$/,''),jenis:'Dokumen final',nomor:'',tgl:l.tgl,lokasi:'',ket:'Bukti kegiatan '+fmtDate(l.tgl)};
+    return storeFile(f,fl).then(function(r){res.push(r);if(r.where!=='toobig')made.push(f)})
+  })},Promise.resolve()).then(function(){
     busyDlg(false);
-    if(r.where==='toobig'){$('#l-err').textContent='File terlalu besar (maks. 5 MB).';return}
-    db.files.push(f);l.fileId=f.id;persistLog(l);cb(l,r);
+    made.forEach(function(f){db.files.push(f);l.fileIds.push(f.id)});
+    l.fileId=l.fileIds[0]||'';persistLog(l);
+    var bad=res.filter(function(r){return r.where==='pending'||r.where==='fail'})[0];
+    cb(l,bad||res[res.length-1]);
   });
 }
 
@@ -1192,8 +1214,8 @@ function buildReport(){
     var logs=db.logs.filter(function(l){return l.tgl>=r[0]&&l.tgl<=r[1]}).sort(byTime),last='',n=0,tot=0,days={},nl=0;
     out.title='Laporan Kinerja Harian';out.sheet='Kinerja Harian';
     out.head=['No','Hari / Tanggal','Waktu','Uraian kegiatan','Output','Keterangan','Bukti dukung'];out.widths=[5,24,14,56,14,34,48];
-    out.rows=logs.map(function(l){n++;tot+=dur(l);days[l.tgl]=1;var w=workById(l.workId),fl=fileById(l.fileId),items=[];
-      if(fl){items.push(fileItem(fl));if(fileUrl(fl))nl++}
+    out.rows=logs.map(function(l){n++;tot+=dur(l);days[l.tgl]=1;var w=workById(l.workId),items=[],hasUrl=false;
+      logFileIds(l).forEach(function(id){var fl=fileById(id);items.push(fileItem(fl));if(fileUrl(fl))hasUrl=true});if(hasUrl)nl++;
       if(l.bukti)items.push({n:l.bukti,u:isUrl(l.bukti)?l.bukti:''});
       var row=[n,l.tgl!==last?fmtLong(l.tgl):'',l.mulai+' - '+l.selesai,l.uraian,l.output?(l.output+' '+(l.satuan||'')).trim():'',w?w.judul:'',items.length?{items:items}:''];last=l.tgl;return row});
     out.summary='Total '+logs.length+' kegiatan pada '+Object.keys(days).length+' hari, '+fmtDur(tot)+'. '+nl+' kegiatan memiliki tautan bukti dukung.';
@@ -1437,6 +1459,7 @@ function wire(){
   dlg=$('#dlg');
   document.addEventListener('click',function(e){
     var t=e.target,b;
+    if((b=t.closest('[data-rmbf]'))){e.preventDefault();if(lDraft){lDraft.fileIds=(lDraft.fileIds||[]).filter(function(x){return x!==b.dataset.rmbf});paintBukti()}return}
     if((b=t.closest('[data-fuel]'))){e.preventDefault();pickFuel(b.dataset.fuel,b);return}
     if((b=t.closest('[data-act]'))){var a=acts[b.dataset.act];if(a){e.preventDefault();a(b,e);if(t.closest('.hero'))toggleFuel(true)}return}
     if(t.closest('.hero')&&!t.closest('#fuel')){toggleFuel();return}
@@ -1470,6 +1493,8 @@ function wire(){
   document.addEventListener('change',function(e){
     var t=e.target;
     if(t.id==='fj'){ui.fj=t.value;paintFileList()}
+    else if(t.id==='l-bf'){if(t.value&&lDraft&&(lDraft.fileIds||[]).length<MAX_BUKTI&&lDraft.fileIds.indexOf(t.value)<0){lDraft.fileIds.push(t.value);paintBukti()}}
+    else if(t.id==='l-file'){var room=MAX_BUKTI-(lDraft.fileIds||[]).length,er=$('#l-err');if(t.files&&t.files.length>room){er.textContent='Kamu memilih '+t.files.length+' file, sisa slot hanya '+Math.max(room,0)+'. Pilih ulang.';t.value=''}else if(er)er.textContent=''}
     else if(t.id==='datepick'){if(t.value){ui.date=t.value;renderLogs()}}
     else if(t.id==='rper'){ui.rep.per=t.value;renderReport()}
     else if(t.id==='rfrom'){ui.rep.from=t.value||today();paintPaper()}
