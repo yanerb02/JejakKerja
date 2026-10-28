@@ -653,6 +653,13 @@ var FOLDER_UTAMA = 'Jejak Kerja';
 var TM = 'R.P.H - Indragiri Hulu';
 var MAX_UPLOAD = 5*1024*1024; // upload multipart cocok sampai sekitar 5 MB
 
+var rhkById=function(id){return (db.rhk||[]).filter(function(r){return r.id===id})[0]};
+var rhkNo=function(r){return (db.rhk||[]).indexOf(r)+1};
+function rhkOf(l){return rhkById(l.rhkId||((workById(l.workId)||{}).rhkId))}
+function rhkLabel(r){return 'RHK '+rhkNo(r)+' · '+shortT(r.teks,64)}
+function rhkOpts(sel,first){return '<option value="">'+first+'</option>'+(db.rhk||[]).map(function(r){return '<option value="'+r.id+'"'+(r.id===sel?' selected':'')+'>'+esc(rhkLabel(r))+'</option>'}).join('')}
+var numOf=function(x){var n=parseFloat(String(x==null?'':x).replace(',','.'));return isNaN(n)?0:n};
+var fmtNum=function(n){return (Math.round(n*100)/100).toString().replace('.',',')};
 var fileById=function(id){return db.files.filter(function(f){return f.id===id})[0]};
 var isUrl=function(x){return /^https?:\/\//i.test(x||'')};
 var fileUrl=function(f){return f&&f.drive&&f.drive.url?f.drive.url:(f&&isUrl(f.lokasi)?f.lokasi:'')};
@@ -979,7 +986,7 @@ function renderWorks(){
   db.works.forEach(function(w){counts[w.status]++;if(w.status!=='selesai')counts.aktif++});
   var fl=[['aktif','Aktif'],['baru','Baru'],['proses','Diproses'],['menunggu','Menunggu'],['selesai','Selesai'],['semua','Semua']];
   $('#view').innerHTML='<div class="page-head"><div><h1>Pekerjaan</h1><p>Satu kartu untuk satu pekerjaan, lengkap dengan asal perintah, tenggat, langkah, dan berkasnya.</p></div>'
-    +'<button class="btn primary" type="button" data-act="newWork">'+ic('plus')+'Pekerjaan baru</button></div>'
+    +'<div class="row"><button class="btn" type="button" data-act="rhk">'+ic('report')+'Kelola RHK</button><button class="btn primary" type="button" data-act="newWork">'+ic('plus')+'Pekerjaan baru</button></div></div>'
     +'<div class="toolbar"><div class="search">'+ic('search')+'<label class="sr" for="wq">Cari pekerjaan</label><input type="search" id="wq" placeholder="Cari judul, nomor surat, atau pemberi tugas" value="'+esc(ui.wq)+'"></div></div>'
     +'<div class="filters" role="group" aria-label="Filter status">'+fl.map(function(f){return '<button class="fchip" type="button" data-wf="'+f[0]+'" aria-pressed="'+(ui.wf===f[0])+'">'+f[1]+'<b>'+counts[f[0]]+'</b></button>'}).join('')+'</div>'
     +'<div id="wlist"></div>';
@@ -1029,6 +1036,7 @@ function openWork(id,preset){
    +'<div class="field"><label for="w-no">Nomor surat</label><input type="text" id="w-no" value="'+esc(wDraft.noSurat)+'"></div>'
    +'<div class="field"><label for="w-ts">Tanggal surat</label><input type="date" id="w-ts" value="'+esc(wDraft.tglSurat)+'"></div>'
    +'<div class="field"><label for="w-te">Tenggat</label><input type="date" id="w-te" value="'+esc(wDraft.tenggat)+'"></div>'
+   +'<div class="field full"><label for="w-rhk">RHK (Rencana Hasil Kerja)</label><select id="w-rhk">'+rhkOpts(wDraft.rhkId,'Belum dikaitkan ke RHK')+'</select>'+((db.rhk||[]).length?'':'<small class="muted">Belum ada RHK. Tambahkan dulu lewat tombol Kelola RHK di halaman Pekerjaan.</small>')+'</div>'
    +'<div class="field full"><label for="w-cat">Catatan</label><textarea id="w-cat" placeholder="Apa yang perlu diingat soal pekerjaan ini?">'+esc(wDraft.catatan)+'</textarea></div></div>'
    +'<div class="field"><span class="lbl">Langkah pengerjaan</span><div class="mini-list" id="w-subs"></div>'
    +'<div class="sub-row" style="grid-template-columns:1fr auto;margin-top:6px"><input type="text" id="w-newsub" placeholder="Tambah langkah, lalu tekan Enter"><button class="btn sm" type="button" data-act="addSub">'+ic('plus')+'Tambah</button></div></div>'
@@ -1046,7 +1054,7 @@ function paintSubs(){
 function readWorkForm(){
   var g=function(i){return $('#'+i).value};
   var w=wDraft;
-  w.judul=g('w-judul').trim();w.kat=g('w-kat');w.prio=g('w-prio');w.asal=g('w-asal').trim();w.status=g('w-status');
+  w.judul=g('w-judul').trim();w.kat=g('w-kat');w.prio=g('w-prio');w.asal=g('w-asal').trim();w.status=g('w-status');w.rhkId=g('w-rhk');
   w.noSurat=g('w-no').trim();w.tglSurat=g('w-ts');w.tenggat=g('w-te');w.catatan=g('w-cat').trim();
   var ns=$('#w-newsub');if(ns&&ns.value.trim()){w.subtasks.push({id:uid(),t:ns.value.trim(),d:0});ns.value=''}
   return w;
@@ -1064,6 +1072,61 @@ function commitWork(){
   return {w:clean,justDone:!wasDone&&clean.status==='selesai'};
 }
 
+
+/* ================= RHK ================= */
+var rDraft=null;
+function rhkStats(r){
+  var rg=repRange(),per=db.logs.filter(function(l){var x=rhkOf(l);return x&&x.id===r.id&&l.tgl>=rg[0]&&l.tgl<=rg[1]});
+  var o=per.reduce(function(a,l){return a+numOf(l.output)},0),m=per.reduce(function(a,l){return a+dur(l)},0);
+  return {n:per.length,o:o,m:m};
+}
+function openRhk(){
+  var list=db.rhk||[],un=db.logs.filter(function(l){return !rhkOf(l)}).length;
+  openDlg('<div class="dh"><h2 id="dlgTitle">Rencana Hasil Kerja (RHK)</h2><button class="iconbtn" type="button" data-act="closeDlg" aria-label="Tutup">'+ic('x')+'</button></div>'
+   +'<div class="db"><p class="muted" style="margin:0 0 10px;font-size:13.5px">Salin RHK dari SKP-mu di e-Kinerja. Setiap pekerjaan dan kegiatan bisa dikaitkan ke satu RHK, lalu laporan bulanan disusun per RHK.</p>'
+   +'<div class="mini-list">'+(list.length?list.map(function(r,i){var st=rhkStats(r);return '<div class="mini"><span><b>RHK '+(i+1)+'</b> · '+esc(shortT(r.teks,110))+'<br><small class="muted">'+esc(r.jenis==='tambahan'?'Tambahan':'Utama')+(r.indikator?' · '+esc(shortT(r.indikator,70)):'')+'<br>Periode laporan terpilih: '+st.n+' kegiatan, '+fmtNum(st.o)+' '+esc(r.satuan||'')+(r.target?' (target '+esc(r.target)+' '+esc(r.satuan||'')+')':'')+', '+fmtDur(st.m)+'</small></span><button class="btn sm" type="button" data-edit-rhk="'+r.id+'">Ubah</button></div>'}).join(''):'<div class="muted" style="padding:6px 2px">Belum ada RHK.</div>')+'</div>'
+   +(list.length&&un?'<p class="muted" style="font-size:13px;margin:10px 0 0">'+un+' kegiatan belum punya RHK. Kaitkan lewat pekerjaan atau form kegiatan.</p>':'')+'</div>'
+   +'<div class="df"><span class="sp"></span><button class="btn" type="button" data-act="closeDlg">Tutup</button><button class="btn primary" type="button" data-act="newRhk">'+ic('plus')+'Tambah RHK</button></div>');
+}
+function openRhkForm(id){
+  var r=id?rhkById(id):null;
+  rDraft=r?JSON.parse(JSON.stringify(r)):{id:uid(),teks:'',jenis:'utama',indikator:'',target:'',satuan:'',atasan:''};
+  openDlg('<div class="dh"><h2 id="dlgTitle">'+(r?'Ubah RHK':'RHK baru')+'</h2><button class="iconbtn" type="button" data-act="rhk" aria-label="Kembali">'+ic('x')+'</button></div>'
+   +'<form id="rform" class="db" autocomplete="off"><div class="fgrid">'
+   +'<div class="field full"><label for="r-teks">Rumusan RHK</label><textarea id="r-teks" required placeholder="Salin persis dari SKP, misalnya: Tersusunnya SOP administrasi pemerintahan perangkat daerah">'+esc(rDraft.teks)+'</textarea></div>'
+   +'<div class="field"><label for="r-jenis">Jenis</label><select id="r-jenis"><option value="utama"'+(rDraft.jenis==='utama'?' selected':'')+'>RHK utama</option><option value="tambahan"'+(rDraft.jenis==='tambahan'?' selected':'')+'>RHK tambahan</option></select></div><div></div>'
+   +'<div class="field full"><label for="r-ind">Indikator kinerja individu</label><textarea id="r-ind" placeholder="Contoh: Jumlah SOP yang tersusun dan ditetapkan">'+esc(rDraft.indikator)+'</textarea></div>'
+   +'<div class="field"><label for="r-target">Target (tahunan)</label><input type="text" id="r-target" inputmode="decimal" value="'+esc(rDraft.target)+'" placeholder="12"></div>'
+   +'<div class="field"><label for="r-sat">Satuan</label><input type="text" id="r-sat" value="'+esc(rDraft.satuan)+'" placeholder="dokumen"></div>'
+   +'<div class="field full"><label for="r-atasan">RHK atasan yang diintervensi (opsional)</label><input type="text" id="r-atasan" value="'+esc(rDraft.atasan)+'"></div></div>'
+   +'<div class="err" id="r-err"></div></form>'
+   +'<div class="df">'+(r?'<button class="btn danger" type="button" data-act="delRhk">'+ic('trash')+'Hapus</button>':'')+'<span class="sp"></span><button class="btn" type="button" data-act="rhk">Batal</button><button class="btn primary" type="button" data-act="saveRhk">Simpan</button></div>');
+}
+var STOPW='yang dan untuk dengan dari pada atas oleh dalam terhadap kepada jumlah tersusunnya terlaksananya kegiatan perangkat daerah'.split(' ');
+function stems(t){
+  var m=String(t||'').toLowerCase().split(/[^a-z0-9]+/).filter(function(x){return x.length>3&&STOPW.indexOf(x)<0});
+  return m.map(function(x){return x.replace(/^(meng|meny|men|mem|me|di|ter|pen|pem|per|pe|se)/,'').replace(/(kan|an|nya|i)$/,'')}).filter(function(x){return x.length>2});
+}
+function guessRhk(l){
+  var w=workById(l.workId),words=stems(l.uraian+' '+(w?w.judul:'')),best=null,bs=0,tie=false;
+  (db.rhk||[]).forEach(function(r){
+    var rw=stems(r.teks+' '+(r.indikator||'')),sc=0;
+    words.forEach(function(x,i){if(words.indexOf(x)===i&&rw.indexOf(x)>-1)sc++});
+    if(sc>bs){bs=sc;best=r;tie=false}else if(sc===bs&&sc>0)tie=true;
+  });
+  return bs>0&&!tie?best:null;
+}
+function eKinerjaText(r){
+  var out=[];
+  r.groups.forEach(function(g){
+    out.push((g.rhk?'RHK '+rhkNo(g.rhk)+': '+g.rhk.teks:'BELUM DIKLASIFIKASI'));
+    g.logs.forEach(function(l){
+      var urls=logFileIds(l).map(function(id){return fileUrl(fileById(id))}).filter(Boolean);if(isUrl(l.bukti))urls.push(l.bukti);
+      out.push('- '+fmtDate(l.tgl)+' | '+l.uraian+' | '+((l.output?l.output+' '+(l.satuan||(g.rhk&&g.rhk.satuan)||''):'-').trim())+' | '+fmtDur(dur(l))+(urls.length?' | Bukti: '+urls.join(' ; '):''));
+    });out.push('')});
+  return out.join('\n').trim();
+}
+
 /* ================= KINERJA ================= */
 var TPL=[['Apel pagi','07:30','08:00'],['Memeriksa surat masuk','',''],['Membuat konsep surat dinas','',''],['Menelaah dan menyusun dokumen','',''],['Rapat atau koordinasi','',''],['Menyusun laporan','','']];
 function renderLogs(){
@@ -1078,7 +1141,7 @@ function renderLogs(){
    +'<div class="week" role="group" aria-label="Minggu ini">'+wk+'</div>'
    +'<div class="card">'+(logs.length?logs.map(function(l){var w=workById(l.workId),k=katOf(w);
       return '<button class="lrow" type="button" data-edit-log="'+l.id+'"><span class="tm">'+l.mulai+'<small>'+l.selesai+'</small></span><span class="tx">'+esc(l.uraian)+'</span>'
-       +'<span class="mt"><span>'+fmtDur(dur(l))+'</span>'+(w?'<span class="chip" style="--dot:'+k.c+'"><i></i><span>'+esc(w.judul)+'</span></span>':'')+(l.output?'<span>Output: '+esc(l.output)+' '+esc(l.satuan||'')+'</span>':'')+(logFileIds(l).length?'<span>Berkas: '+logFileIds(l).map(function(id){return esc(fileById(id).nama)}).join(', ')+'</span>':'')+(l.bukti?'<span>Bukti: '+esc(l.bukti)+'</span>':'')+'</span></button>'}).join('')
+       +'<span class="mt"><span>'+fmtDur(dur(l))+'</span>'+(w?'<span class="chip" style="--dot:'+k.c+'"><i></i><span>'+esc(w.judul)+'</span></span>':'')+(l.output?'<span>Output: '+esc(l.output)+' '+esc(l.satuan||'')+'</span>':'')+(rhkOf(l)?'<span>RHK '+rhkNo(rhkOf(l))+'</span>':'')+(logFileIds(l).length?'<span>Berkas: '+logFileIds(l).map(function(id){return esc(fileById(id).nama)}).join(', ')+'</span>':'')+(l.bukti?'<span>Bukti: '+esc(l.bukti)+'</span>':'')+'</span></button>'}).join('')
      :'<div class="empty" style="margin:14px"><b>Belum ada kegiatan di tanggal ini</b>Pakai tombol Catat kegiatan atau pilih templat di bawah.</div>')+'</div>'
    +'<div class="totals"><span>Total tercatat <b>'+fmtDur(mins)+'</b></span><span>Target <b>'+String(db.profile.targetJam||7.5).replace('.',',')+' j</b></span><span>'+(sisa?'Kurang <b>'+fmtDur(sisa)+'</b>':'Target hari ini terpenuhi')+'</span></div>'
    +'<div class="section"><h2 style="font-size:15px">Templat cepat</h2><div class="tpl">'+TPL.map(function(t,i){return '<button class="fchip" type="button" data-tpl="'+i+'">'+esc(t[0])+'</button>'}).join('')+'</div></div>';
@@ -1097,6 +1160,7 @@ function openLog(id,preset){
    +'<div class="field"><label for="l-s">Selesai</label><input type="time" id="l-s" required value="'+lDraft.selesai+'"></div>'
    +'<div class="field full"><label for="l-u">Uraian kegiatan</label><textarea id="l-u" required placeholder="Tulis kegiatan sebagai kalimat kerja, misalnya: Menyusun konsep surat balasan evaluasi RB">'+esc(lDraft.uraian)+'</textarea></div>'
    +'<div class="field full"><label for="l-w">Pekerjaan terkait</label><select id="l-w"><option value="">Tidak terkait pekerjaan tertentu</option>'+aktif.map(function(w){return '<option value="'+w.id+'"'+(w.id===lDraft.workId?' selected':'')+'>'+esc(w.judul)+'</option>'}).join('')+'</select></div>'
+   +'<div class="field full"><label for="l-rhk">RHK</label><select id="l-rhk">'+rhkOpts(lDraft.rhkId,'')+'</select></div>'
    +'<div class="field"><label for="l-o">Output (jumlah)</label><input type="text" id="l-o" inputmode="decimal" value="'+esc(lDraft.output)+'" placeholder="1"></div>'
    +'<div class="field"><label for="l-sat">Satuan</label><input type="text" id="l-sat" list="satuan" value="'+esc(lDraft.satuan)+'" placeholder="dokumen"><datalist id="satuan"><option value="dokumen"><option value="surat"><option value="kegiatan"><option value="laporan"><option value="berkas"><option value="bahan"><option value="orang"></datalist></div>'
    +'<div class="field full"><label for="l-bf">Berkas bukti dukung <small class="muted">(maksimal '+MAX_BUKTI+')</small></label><div class="bfc" id="l-chips"></div><select id="l-bf"></select></div>'
@@ -1105,7 +1169,12 @@ function openLog(id,preset){
    +'<div class="err" id="l-err"></div></form>'
    +'<div class="df">'+(l?'<button class="btn danger" type="button" data-act="delLog">'+ic('trash')+'Hapus</button>':'')+'<span class="sp"></span><button class="btn" type="button" data-act="closeDlg">Batal</button>'
    +(l?'':'<button class="btn" type="button" data-act="saveLogMore">Simpan dan tambah lagi</button>')+'<button class="btn primary" type="button" data-act="saveLog">Simpan</button></div>');
-  paintBukti();
+  paintBukti();paintRhkAuto();
+}
+function paintRhkAuto(){
+  var sel=$('#l-rhk');if(!sel)return;
+  var w=workById($('#l-w')&&$('#l-w').value),r=w&&rhkById(w.rhkId),o=sel.options[0];
+  o.textContent=r?'Otomatis dari pekerjaan: '+rhkLabel(r):(w&&(db.rhk||[]).length?'Pekerjaan ini belum punya RHK. Pilih manual:':((db.rhk||[]).length?'Pilih RHK (opsional)':'Belum ada RHK (tambah lewat Kelola RHK)'));
 }
 function paintBukti(){
   var ids=lDraft.fileIds||[],room=MAX_BUKTI-ids.length,box=$('#l-chips'),sel=$('#l-bf'),inp=$('#l-file'),hint=$('#l-fhint');
@@ -1117,7 +1186,7 @@ function paintBukti(){
 }
 function readLog(){
   var g=function(i){return $('#'+i).value};
-  var l=lDraft;l.tgl=g('l-tgl');l.mulai=g('l-m');l.selesai=g('l-s');l.uraian=g('l-u').trim();l.workId=g('l-w');l.output=g('l-o').trim();l.satuan=g('l-sat').trim();l.bukti=g('l-b').trim();l.fileIds=(lDraft.fileIds||[]).slice(0,MAX_BUKTI);l.fileId=l.fileIds[0]||'';
+  var l=lDraft;l.tgl=g('l-tgl');l.mulai=g('l-m');l.selesai=g('l-s');l.uraian=g('l-u').trim();l.workId=g('l-w');l.output=g('l-o').trim();l.satuan=g('l-sat').trim();l.bukti=g('l-b').trim();l.rhkId=g('l-rhk');l.fileIds=(lDraft.fileIds||[]).slice(0,MAX_BUKTI);l.fileId=l.fileIds[0]||'';
   var er=$('#l-err');
   if(!l.tgl||!l.mulai||!l.selesai){er.textContent='Tanggal dan jam wajib diisi.';return null}
   if(toMin(l.selesai)<=toMin(l.mulai)){er.textContent='Jam selesai harus setelah jam mulai.';return null}
@@ -1210,14 +1279,34 @@ function repRange(){
 function repLabel(r){return r[0]===r[1]?fmtLong(r[0]):fmtDate(r[0])+' s.d. '+fmtDate(r[1])}
 function buildReport(){
   var r=repRange(),p=db.profile,out={meta:[['Nama',p.nama||'-'],['NIP',p.nip||'-'],['Jabatan',p.jabatan||'-'],['Unit kerja',p.unit||'-']],range:r,period:repLabel(r)};
-  if(ui.rep.jenis==='kinerja'){
+  if(ui.rep.jenis==='rhk'){
+    var all=db.logs.filter(function(l){return l.tgl>=r[0]&&l.tgl<=r[1]}).sort(byTime),groups=[],n=0,tot=0;
+    (db.rhk||[]).forEach(function(x){groups.push({rhk:x,logs:all.filter(function(l){var y=rhkOf(l);return y&&y.id===x.id})})});
+    var un=all.filter(function(l){return !rhkOf(l)});groups.push({rhk:null,logs:un});
+    groups=groups.filter(function(g){return g.logs.length||g.rhk});
+    out.groups=groups;out.title='Laporan Bulanan Kinerja per RHK';out.sheet='Per RHK';
+    out.head=['No','RHK dan indikator','Tanggal','Uraian kegiatan','Output','Durasi','Bukti dukung (tautan)'];out.widths=[5,46,14,52,16,10,46];
+    out.rows=[];var sum=[];
+    groups.forEach(function(g){
+      var name=g.rhk?('RHK '+rhkNo(g.rhk)+(g.rhk.jenis==='tambahan'?' (tambahan)':'')+': '+g.rhk.teks+(g.rhk.indikator?'\nIndikator: '+g.rhk.indikator:'')):'Belum diklasifikasi ke RHK';
+      var o=0,m=0,first=true;
+      if(!g.logs.length){out.rows.push(['',name,'','Belum ada kegiatan pada periode ini','','','']);return}
+      g.logs.forEach(function(l){n++;o+=numOf(l.output);m+=dur(l);tot+=dur(l);
+        var items=[];logFileIds(l).forEach(function(id){items.push(fileItem(fileById(id)))});if(l.bukti)items.push({n:l.bukti,u:isUrl(l.bukti)?l.bukti:''});
+        out.rows.push([n,first?name:'',fmtDate(l.tgl),l.uraian,l.output?(l.output+' '+(l.satuan||(g.rhk&&g.rhk.satuan)||'')).trim():'',fmtDur(dur(l)),items.length?{items:items}:'']);first=false});
+      var sat=(g.rhk&&g.rhk.satuan)||'';
+      out.rows.push(['','','','Jumlah'+(g.rhk?' RHK '+rhkNo(g.rhk):' belum diklasifikasi')+' ('+g.logs.length+' kegiatan)',fmtNum(o)+(sat?' '+sat:'')+(g.rhk&&g.rhk.target?' dari target tahunan '+g.rhk.target:''),fmtDur(m),'']);
+      sum.push((g.rhk?'RHK '+rhkNo(g.rhk):'Belum diklasifikasi')+': '+g.logs.length+' kegiatan, '+fmtDur(m));
+    });
+    out.summary='Total '+all.length+' kegiatan, '+fmtDur(tot)+'. '+(sum.join('; '))+(un.length?'. Perhatian: '+un.length+' kegiatan belum dikaitkan ke RHK.':'.')+((db.rhk||[]).length?'':' Belum ada RHK yang diisi.');
+  }else if(ui.rep.jenis==='kinerja'){
     var logs=db.logs.filter(function(l){return l.tgl>=r[0]&&l.tgl<=r[1]}).sort(byTime),last='',n=0,tot=0,days={},nl=0;
     out.title='Laporan Kinerja Harian';out.sheet='Kinerja Harian';
-    out.head=['No','Hari / Tanggal','Waktu','Uraian kegiatan','Output','Keterangan','Bukti dukung'];out.widths=[5,24,14,56,14,34,48];
+    out.head=['No','Hari / Tanggal','Waktu','Uraian kegiatan','Output','Keterangan','RHK','Bukti dukung'];out.widths=[5,24,14,50,14,30,44,44];
     out.rows=logs.map(function(l){n++;tot+=dur(l);days[l.tgl]=1;var w=workById(l.workId),items=[],hasUrl=false;
       logFileIds(l).forEach(function(id){var fl=fileById(id);items.push(fileItem(fl));if(fileUrl(fl))hasUrl=true});if(hasUrl)nl++;
       if(l.bukti)items.push({n:l.bukti,u:isUrl(l.bukti)?l.bukti:''});
-      var row=[n,l.tgl!==last?fmtLong(l.tgl):'',l.mulai+' - '+l.selesai,l.uraian,l.output?(l.output+' '+(l.satuan||'')).trim():'',w?w.judul:'',items.length?{items:items}:''];last=l.tgl;return row});
+      var row=[n,l.tgl!==last?fmtLong(l.tgl):'',l.mulai+' - '+l.selesai,l.uraian,l.output?(l.output+' '+(l.satuan||'')).trim():'',w?w.judul:'',rhkOf(l)?'RHK '+rhkNo(rhkOf(l))+': '+rhkOf(l).teks:'-',items.length?{items:items}:''];last=l.tgl;return row});
     out.summary='Total '+logs.length+' kegiatan pada '+Object.keys(days).length+' hari, '+fmtDur(tot)+'. '+nl+' kegiatan memiliki tautan bukti dukung.';
   }else{
     out.title='Rekap Pekerjaan';out.sheet='Rekap Pekerjaan';
@@ -1233,10 +1322,13 @@ function buildReport(){
 function renderReport(){
   var R=ui.rep,per=[['hari','Hari ini'],['minggu','Minggu ini'],['bulan','Bulan ini'],['lalu','Bulan lalu'],['kustom','Pilih sendiri']];
   $('#view').innerHTML='<div class="page-head"><div><h1>Laporan</h1><p>Pilih jenis dan periode, periksa pratinjaunya, lalu unduh sebagai Excel atau Word.</p></div></div>'
-   +'<div class="rlayout"><div class="card panel"><div class="field"><span class="lbl">Jenis laporan</span><div class="seg"><button type="button" data-rj="kinerja" aria-pressed="'+(R.jenis==='kinerja')+'">Kinerja harian</button><button type="button" data-rj="pekerjaan" aria-pressed="'+(R.jenis==='pekerjaan')+'">Rekap pekerjaan</button></div></div>'
+   +'<div class="rlayout"><div class="card panel"><div class="field"><span class="lbl">Jenis laporan</span><div class="seg"><button type="button" data-rj="kinerja" aria-pressed="'+(R.jenis==='kinerja')+'">Kinerja harian</button><button type="button" data-rj="pekerjaan" aria-pressed="'+(R.jenis==='pekerjaan')+'">Rekap pekerjaan</button><button type="button" data-rj="rhk" aria-pressed="'+(R.jenis==='rhk')+'">Per RHK (e-Kinerja)</button></div></div>'
    +'<div class="field"><label for="rper">Periode</label><select id="rper">'+per.map(function(p){return '<option value="'+p[0]+'"'+(R.per===p[0]?' selected':'')+'>'+p[1]+'</option>'}).join('')+'</select></div>'
    +(R.per==='kustom'?'<div class="fgrid"><div class="field"><label for="rfrom">Dari</label><input type="date" id="rfrom" value="'+R.from+'"></div><div class="field"><label for="rto">Sampai</label><input type="date" id="rto" value="'+R.to+'"></div></div>':'')
    +'<button class="btn primary" type="button" data-act="exportXlsx">'+ic('down')+'Unduh Excel (.xlsx)</button><button class="btn" type="button" data-act="exportDoc">'+ic('down')+'Unduh Word (.doc)</button>'
+   +(R.jenis==='rhk'?'<button class="btn" type="button" data-act="copyEk">'+ic('copy')+'Salin teks untuk e-Kinerja</button><button class="btn" type="button" data-act="reportToFile">'+ic('folder')+'Simpan laporan sebagai berkas</button>':'')
+   +((R.jenis==='rhk'&&(db.rhk||[]).length&&db.logs.some(function(l){var g=repRange();return l.tgl>=g[0]&&l.tgl<=g[1]&&!rhkOf(l)}))?'<button class="btn" type="button" data-act="autoRhk">'+ic('target')+'Kaitkan otomatis yang belum punya RHK</button>':'')
+   +'<button class="btn sm" type="button" data-act="rhk">'+ic('report')+'Kelola RHK</button>'
    +'<p class="muted" style="margin:0;font-size:12.5px">Nama, NIP, jabatan, dan nama atasan diambil dari Profil. <button class="btn sm" type="button" data-act="settings" style="margin-left:2px">Ubah profil</button></p></div>'
    +'<div id="paper"></div></div>';
   paintPaper();
@@ -1251,7 +1343,8 @@ function paintPaper(){
    +'<div class="r"><span>'+esc(p.kota||'................')+', '+esc(fmtDate(today()))+'</span><span>Pegawai yang melaporkan,</span><span class="sp"></span><b>'+esc(p.nama||'(................................)')+'</b><span>NIP. '+esc(p.nip||'................................')+'</span></div></div><div class="tmk">'+esc(TM)+'</div></div>';
 }
 function fileBase(r){return (r.title.replace(/\s+/g,'-'))+'_'+r.range[0]+'_'+r.range[1]}
-function exportXlsx(){
+function exportXlsx(save){
+  if(typeof save!=='function')save=null;
   var r=buildReport(),p=db.profile;
   var aoa=[[r.title.toUpperCase()],['Periode: '+r.period],[]].concat(r.meta.map(function(m){return [m[0],': '+m[1]]})).concat([[]]);
   var headRow=aoa.length,links=[];aoa.push(r.head);
@@ -1268,13 +1361,16 @@ function exportXlsx(){
       +'<tr>'+r.head.map(function(x){return '<th>'+esc(x)+'</th>'}).join('')+'</tr>'
       +r.rows.map(function(row){return '<tr>'+row.map(function(c){return '<td>'+cellHtml(c)+'</td>'}).join('')+'</tr>'}).join('')
       +'<tr><td colspan="'+r.head.length+'">'+esc(r.summary)+'</td></tr><tr><td colspan="'+r.head.length+'"><i>'+esc(TM)+'</i></td></tr></table></body></html>';
+    if(save){save(new File(['\ufeff'+h],fileBase(r)+'.xls',{type:'application/vnd.ms-excel'}));return}
     download(new Blob(['\ufeff'+h],{type:'application/vnd.ms-excel'}),fileBase(r)+'.xls');toast('Excel diunduh (format .xls)');
   };
   var go=function(){
     try{var ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=r.widths.map(function(w){return {wch:w}});
       ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:r.head.length-1}},{s:{r:1,c:0},e:{r:1,c:r.head.length-1}}];
       links.forEach(function(L){var a=XLSX.utils.encode_cell({r:L[0],c:L[1]});if(ws[a])ws[a].l={Target:L[2]}});
-      var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,r.sheet);XLSX.writeFile(wb,fileBase(r)+'.xlsx');toast('Excel diunduh')}
+      var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,r.sheet);
+      if(save){var arr=XLSX.write(wb,{bookType:'xlsx',type:'array'});save(new File([arr],fileBase(r)+'.xlsx',{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));return}
+      XLSX.writeFile(wb,fileBase(r)+'.xlsx');toast('Excel diunduh')}
     catch(e){fallback()}
   };
   if(window.XLSX)return go();
@@ -1396,6 +1492,45 @@ var acts={
   settings:function(){openSettings()},
   clearSample:function(){wipeSamples();save();render(true);toast('Data contoh dihapus. Selamat mulai dari nol.')},
   newWork:function(){openWork(null)},
+  rhk:function(){openRhk()},
+  newRhk:function(){openRhkForm(null)},
+  saveRhk:function(){
+    var g=function(i){return $('#'+i).value.trim()},d=rDraft;
+    d.teks=g('r-teks');d.jenis=$('#r-jenis').value;d.indikator=g('r-ind');d.target=g('r-target');d.satuan=g('r-sat');d.atasan=g('r-atasan');
+    if(!d.teks){$('#r-err').textContent='Rumusan RHK belum diisi.';$('#r-teks').focus();return}
+    var ex=rhkById(d.id);if(ex)db.rhk[db.rhk.indexOf(ex)]=d;else db.rhk.push(d);
+    save();render(true);openRhk();toast('RHK disimpan');
+  },
+  delRhk:function(b){
+    if(!b.dataset.sure){b.dataset.sure=1;b.innerHTML=ic('trash')+'Yakin hapus?';return}
+    var id=rDraft.id;db.rhk=db.rhk.filter(function(x){return x.id!==id});
+    db.works.forEach(function(w){if(w.rhkId===id)w.rhkId=''});db.logs.forEach(function(l){if(l.rhkId===id)l.rhkId=''});
+    save();render(true);openRhk();toast('RHK dihapus. Kaitan di pekerjaan dan kegiatan dilepas.');
+  },
+  autoRhk:function(b){
+    var rg=repRange(),cand=db.logs.filter(function(l){return l.tgl>=rg[0]&&l.tgl<=rg[1]&&!rhkOf(l)}),hit=cand.map(function(l){return [l,guessRhk(l)]}).filter(function(x){return x[1]});
+    if(!hit.length){toast('Tidak ada kegiatan yang cocok otomatis. Kaitkan manual lewat form kegiatan.');return}
+    if(!b.dataset.sure){b.dataset.sure=1;b.textContent='Yakin? '+hit.length+' dari '+cand.length+' kegiatan akan dikaitkan. Ketuk lagi';return}
+    hit.forEach(function(x){x[0].rhkId=x[1].id});save();renderReport();toast(hit.length+' kegiatan dikaitkan ke RHK. Periksa hasilnya di pratinjau.');
+  },
+  copyEk:function(){
+    var r=buildReport(),t=eKinerjaText(r);
+    if(!t){toast('Belum ada kegiatan pada periode ini');return}
+    var ok=function(){toast('Teks e-Kinerja tersalin')},no=function(){var ta=document.createElement('textarea');ta.value=t;ta.style.cssText='position:fixed;opacity:0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy')?ok():toast('Salin manual dari Unduh Word')}catch(e){toast('Salin manual dari Unduh Word')}ta.remove()};
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(ok,no);else no();
+  },
+  reportToFile:function(){
+    var r=buildReport();
+    if(!r.rows.length){toast('Belum ada kegiatan pada periode ini');return}
+    toast('Menyiapkan berkas laporan…');
+    exportXlsx(function(file){
+      var f={id:uid(),workId:'',nama:fileBase(r),jenis:'Dokumen final',nomor:'',tgl:today(),lokasi:'',ket:'Laporan bulanan per RHK, '+r.period};
+      storeFile(f,file).then(function(x){
+        if(x.where==='toobig'){toast('File terlalu besar (maks. 5 MB)');return}
+        db.files.push(f);save();toast(storeMsg(x));
+      });
+    });
+  },
   newFile:function(){fReturnWork=null;openFile(null)},
   newLog:function(){openLog(null)},
   addSub:function(){var i=$('#w-newsub');if(i.value.trim()){readWorkForm();paintSubs();i.focus()}},
@@ -1459,6 +1594,7 @@ function wire(){
   dlg=$('#dlg');
   document.addEventListener('click',function(e){
     var t=e.target,b;
+    if((b=t.closest('[data-edit-rhk]'))){openRhkForm(b.dataset.editRhk);return}
     if((b=t.closest('[data-rmbf]'))){e.preventDefault();if(lDraft){lDraft.fileIds=(lDraft.fileIds||[]).filter(function(x){return x!==b.dataset.rmbf});paintBukti()}return}
     if((b=t.closest('[data-fuel]'))){e.preventDefault();pickFuel(b.dataset.fuel,b);return}
     if((b=t.closest('[data-act]'))){var a=acts[b.dataset.act];if(a){e.preventDefault();a(b,e);if(t.closest('.hero'))toggleFuel(true)}return}
@@ -1493,6 +1629,7 @@ function wire(){
   document.addEventListener('change',function(e){
     var t=e.target;
     if(t.id==='fj'){ui.fj=t.value;paintFileList()}
+    else if(t.id==='l-w'){paintRhkAuto()}
     else if(t.id==='l-bf'){if(t.value&&lDraft&&(lDraft.fileIds||[]).length<MAX_BUKTI&&lDraft.fileIds.indexOf(t.value)<0){lDraft.fileIds.push(t.value);paintBukti()}}
     else if(t.id==='l-file'){var room=MAX_BUKTI-(lDraft.fileIds||[]).length,er=$('#l-err');if(t.files&&t.files.length>room){er.textContent='Kamu memilih '+t.files.length+' file, sisa slot hanya '+Math.max(room,0)+'. Pilih ulang.';t.value=''}else if(er)er.textContent=''}
     else if(t.id==='datepick'){if(t.value){ui.date=t.value;renderLogs()}}
@@ -1501,7 +1638,7 @@ function wire(){
     else if(t.id==='rto'){ui.rep.to=t.value||today();paintPaper()}
     else if(t.dataset&&t.dataset.subDone!=null){wDraft.subtasks[+t.dataset.subDone].d=t.checked?1:0;if(t.checked){var sts=wDraft.subtasks;confetti(sts.every(function(x){return x.d})&&sts.length>1)}}
     else if(t.id==='restoreFile'&&t.files&&t.files[0]){
-      var fr=new FileReader();fr.onload=function(){try{var d=JSON.parse(fr.result);if(!d||d.v!==1||!d.works||!d.logs)throw 0;var keep=db.profile&&db.profile.drive;db=d;db.profile=db.profile||{};if(keep)db.profile.drive=keep;db.prefs=db.prefs||{theme:''};db.files=db.files||[];save();applyTheme();setAvatar(db.profile.avatar);closeDlg();render(true);toast('Data dipulihkan dari cadangan')}catch(x){toast('Berkas cadangan tidak valid')}};fr.readAsText(t.files[0]);
+      var fr=new FileReader();fr.onload=function(){try{var d=JSON.parse(fr.result);if(!d||d.v!==1||!d.works||!d.logs)throw 0;var keep=db.profile&&db.profile.drive;db=d;db.profile=db.profile||{};if(keep)db.profile.drive=keep;db.prefs=db.prefs||{theme:''};db.files=db.files||[];db.rhk=db.rhk||[];save();applyTheme();setAvatar(db.profile.avatar);closeDlg();render(true);toast('Data dipulihkan dari cadangan')}catch(x){toast('Berkas cadangan tidak valid')}};fr.readAsText(t.files[0]);
     }
   });
   document.addEventListener('submit',function(e){
@@ -1522,7 +1659,7 @@ function wire(){
 db=load();
 if(!db){db=seed();save()}
 setAvatar(db.profile&&db.profile.avatar);
-db.prefs=db.prefs||{theme:''};db.profile=db.profile||{};
+db.prefs=db.prefs||{theme:''};db.profile=db.profile||{};db.rhk=db.rhk||[];
 buildChrome();wire();applyTheme();route();
 })();
 </script>
