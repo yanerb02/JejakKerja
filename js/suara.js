@@ -3,7 +3,7 @@
    Memakai Web Speech API bawaan peramban (bahasa Indonesia). Suara diproses oleh layanan pengenal suara
    peramban (Chrome/Android: Google, Safari: Apple), jadi perlu internet. Tanpa dukungan, kolom ketik tetap bisa dipakai. */
 var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-var VO={rec:null,on:false,text:'',alts:[],err:'',q:'',res:null,mode:'idle'};
+var VO={seq:0,ready:false,rec:null,on:false,text:'',alts:[],err:'',q:'',res:null,mode:'idle'};
 
 /* kata perintah/pengisi yang dibuang dari ucapan sebelum mencari */
 var V_STOP={tolong:1,coba:1,minta:1,carikan:1,cari:1,temukan:1,tampilkan:1,tunjukkan:1,buka:1,bukakan:1,lihat:1,munculkan:1,mana:1,dimana:1,
@@ -68,7 +68,7 @@ function vBody(){
   if(VO.mode==='listen'){
     h+='<div class="vlisten"><button class="vmic big on" type="button" data-act="voiceStop" aria-label="Berhenti mendengarkan">'+ic('mic')+'</button>'
       +'<div class="vbars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>'
-      +'<div class="vsay" id="vsay">'+(VO.text?esc(VO.text):'Mendengarkan… sebutkan berkas yang dicari')+'</div>'
+      +'<div class="vsay" id="vsay">'+(VO.text?esc(VO.text):(VO.ready?'Mendengarkan… sebutkan berkas yang dicari':'Menyiapkan mikrofon…'))+'</div>'
       +'<div class="muted" style="font-size:12.5px">Contoh: "cari surat undangan rapat", "buka berkas SOP", "nomor 145"</div></div>';
   }else if(VO.mode==='result'){
     var r=VO.res,list=r.list;
@@ -104,15 +104,29 @@ function vFinish(alts,spoken){
   vPaint();
 }
 function vStop(abort){
+  VO.seq++;
   try{if(VO.rec){abort?VO.rec.abort():VO.rec.stop()}}catch(e){}
 }
 function vStart(){
-  wkStop();VO.err='';VO.text='';VO.alts=[];VO.res=null;VO.mode='idle';
+  var wasW=!!WK.rec;wkStop();VO.err='';VO.text='';VO.alts=[];VO.res=null;VO.mode='idle';
   if(!dlg.open||!$('#vbody'))vOpen();
   if(!SR){VO.mode='idle';vPaint();var q=$('#vq');if(q)q.focus();return}
+  VO.mode='listen';VO.ready=false;VO.on=true;vPaint();
+  /* iPad/iPhone hanya mengizinkan satu sesi mikrofon: beri waktu agar sesi siaga benar-benar lepas */
+  var seq=++VO.seq;setTimeout(function(){if(seq===VO.seq&&VO.mode==='listen')vBegin(seq)},wasW?700:0);
+}
+function vBegin(seq){
   var rec=new SR(),got=false;
   rec.lang='id-ID';rec.interimResults=true;rec.continuous=false;rec.maxAlternatives=3;
   VO.rec=rec;VO.on=true;VO.mode='listen';vPaint();
+  rec.onaudiostart=rec.onstart=function(){VO.ready=true;var s=$('#vsay');if(s&&!VO.text)s.textContent='Mendengarkan… sebutkan berkas yang dicari'};
+  setTimeout(function(){ /* mikrofon tak kunjung menyala: beri petunjuk, jangan diam saja */
+    if(seq!==VO.seq||VO.ready||VO.mode!=='listen')return;
+    try{rec.abort()}catch(e){}
+    VO.on=false;VO.mode='idle';
+    VO.err='Mikrofon tidak menyala. Di iPhone/iPad: pastikan Dikte aktif (Pengaturan > Umum > Papan Ketik > Aktifkan Dikte), izinkan Mikrofon untuk situs ini (ikon aA di Safari > Pengaturan Situs Web), dan buka lewat Safari, bukan dari ikon layar utama. Atau ketik/dikte di kolom di bawah.';
+    vPaint();
+  },6000);
   rec.onresult=function(e){
     var txt='',alts=[],last=e.results[e.results.length-1];
     for(var i=0;i<e.results.length;i++)txt+=e.results[i][0].transcript+' ';
