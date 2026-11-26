@@ -338,3 +338,32 @@ textarea{resize:vertical;min-height:84px}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:200;overflow:hidden}
 .confetti i{position:absolute;width:8px;height:12px;border-radius:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+/* ===== perintah suara ===== */
+.vfab{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(78px + env(safe-area-inset-bottom,0px));z-index:29;width:54px;height:54px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;box-shadow:0 10px 24px -8px rgba(10,124,116,.7),0 2px 6px rgba(0,0,0,.2)}
+.vfab .ic{width:24px;height:24px}
+.vfab:active{transform:scale(.94)}
+@media (min-width:900px){.vfab{bottom:28px;right:28px}}
+html.typing .vfab{display:none}
+dialog[open] ~ .vfab{display:none}
+.search .vmic{position:absolute;right:5px;top:5px;width:34px;height:34px;border-radius:10px;border:0;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center}
+.search .vmic .ic{position:static;width:18px;height:18px;color:inherit}
+.search input[type=search]{padding-right:46px}
+.vlisten{display:grid;justify-items:center;gap:12px;text-align:center;padding:8px 0}
+.vmic.big{width:84px;height:84px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;animation:vpulse 1.4s ease-out infinite}
+.vmic.big .ic{width:34px;height:34px}
+@keyframes vpulse{0%{box-shadow:0 0 0 0 rgba(10,124,116,.5)}100%{box-shadow:0 0 0 26px rgba(10,124,116,0)}}
+.vbars{display:flex;gap:4px;align-items:center;height:24px}
+.vbars i{width:4px;height:6px;border-radius:2px;background:var(--accent);animation:vbar 1s ease-in-out infinite}
+.vbars i:nth-child(2){animation-delay:.12s}.vbars i:nth-child(3){animation-delay:.24s}.vbars i:nth-child(4){animation-delay:.36s}.vbars i:nth-child(5){animation-delay:.48s}
+@keyframes vbar{0%,100%{height:6px}50%{height:22px}}
+.vsay{font-family:var(--f-display);font-size:19px;font-weight:600;min-height:28px;text-wrap:balance}
+.vheard{font-size:14px;color:var(--muted)}.vheard b{color:var(--ink)}
+.vlbl{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-top:2px}
+.vtop{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.vmsg{margin:0;padding:10px 12px;border-radius:12px;font-size:13.5px}.vmsg.bad{background:rgba(194,59,39,.1);color:var(--bad)}
+.vtype{display:flex;gap:8px}.vtype input{flex:1;min-width:0}
+@media (prefers-reduced-motion:reduce){.vmic.big,.vbars i{animation:none}}
+.vfab.siaga::after{content:"";position:absolute;top:3px;right:3px;width:12px;height:12px;border-radius:50%;background:var(--sun);border:2px solid var(--surface)}
+.vfab.siaga.live::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:2px solid var(--accent);opacity:.6;animation:vpulse2 2s ease-out infinite}
+@keyframes vpulse2{0%{transform:scale(.9);opacity:.7}100%{transform:scale(1.25);opacity:0}}
+@media (prefers-reduced-motion:reduce){.vfab.siaga.live::before{animation:none}}
