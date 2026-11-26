@@ -43,6 +43,7 @@ function openSettings(){
   openDlg('<div class="dh"><h2 id="dlgTitle">Profil dan data</h2><button class="iconbtn" type="button" data-act="closeDlg" aria-label="Tutup">'+ic('x')+'</button></div>'
    +'<form id="sform" class="db" autocomplete="off"><p class="muted" style="margin:0;font-size:13.5px">Profil dipakai untuk kop dan tanda tangan di laporan.</p>'
    +'<div class="field"><span class="lbl">Karakter maskot</span><div class="avpick" id="avpick">'+AVATARS.map(function(a){return '<button type="button" data-act="pickAvatar" data-av="'+a[0]+'" aria-pressed="'+((p.avatar||'pria')===a[0])+'"><i class="th" style="background-image:url('+a[2]+')"></i>'+a[1]+'</button>'}).join('')+'</div></div>'
+   +'<div class="field"><span class="lbl">Perintah suara</span><div class="row"><button type="button" class="btn sm" id="siagaBtn" data-act="toggleSiaga" aria-pressed="'+wkEnabled()+'">'+wkLabel()+'</button></div><span class="muted" style="font-size:12.5px">Saat aktif dan aplikasi terbuka, ucapkan “Ian” lalu sebut berkas yang dicari. Butuh internet dan izin mikrofon.</span></div>'
    +'<div class="fgrid">'
    +f('s-nama','Nama lengkap',p.nama,'',0)+f('s-nip','NIP',p.nip,'',0)+f('s-jab','Jabatan',p.jabatan,'Contoh: Analis Kebijakan Ahli Pertama',1)+f('s-unit','Unit kerja',p.unit,'',1)
    +f('s-atasan','Nama atasan langsung',p.atasan,'',0)+f('s-nipa','NIP atasan',p.nipAtasan,'',0)+f('s-jaba','Jabatan atasan',p.jabatanAtasan,'Contoh: Kepala Bagian Organisasi',0)+f('s-kota','Kota (untuk tanda tangan)',p.kota,'',0)
