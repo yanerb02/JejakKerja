@@ -1,6 +1,6 @@
 /* Service worker Jejak Kerja: aplikasi bisa dibuka offline.
    Naikkan angka VERSI setiap kali kamu mengubah file apa pun, supaya HP mengunduh versi baru. */
-var VERSI='jejak-v3';
+var VERSI='jejak-v5';
 var INTI=['./','index.html','manifest.webmanifest','css/app.css','fonts/fonts.css',
   'icons/icon-192.png','icons/icon-512.png',
   'js/vendor/qrcode.js','js/config.js','js/util-data.js','js/hero.js','js/penyimpanan-drive.js','js/maskot.js','js/beranda.js',
