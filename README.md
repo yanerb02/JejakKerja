@@ -19,6 +19,7 @@ js/
   penyimpanan-drive.js  IndexedDB lampiran + Google Drive
   beranda.js  maskot.js  pekerjaan.js  rhk.js  kinerja.js  berkas.js  laporan.js  pengaturan.js
   aksi.js               penanganan klik/aksi
+  suara.js              perintah suara: cari berkas dengan bicara (Web Speech API)
   mulai.js              start aplikasi + service worker
   vendor/qrcode.js      pustaka QR (MIT)
 ```
